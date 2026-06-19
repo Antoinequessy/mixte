@@ -1,6 +1,8 @@
+import math
 import numpy as np
 import scipy as sp
 import matplotlib.pyplot as plt
+import time
 from itertools import combinations
 from collections import deque
 
@@ -16,6 +18,61 @@ class Ket:
     def __repr__(self):
         return self.name if self.name is not None else "Ket"
 
+
+
+def connected_component(H, start):
+
+    n = H.shape[0]
+    visited = set([start])
+    queue = deque([start])
+
+    while queue:
+        i = queue.popleft()
+
+        neighbors = np.where(H[i] != 0)[0]
+
+        for j in neighbors:
+            if j not in visited:
+                visited.add(int(j))
+                queue.append(j)
+
+    return visited
+
+
+
+def all_components(H):
+    n = H.shape[0]
+    visited = set()
+    components = []
+
+    for i in range(n):
+        if i not in visited:
+            comp = connected_component(H, i)
+            components.append(comp)
+            visited |= comp
+
+    return components
+
+
+
+def gen_diagonalization(H, S, eps=1e-6):
+
+    eig_S, U = np.linalg.eigh(S)
+
+    mask = eig_S > eps
+
+    eig_S = eig_S[mask]
+    U = U[:, mask]
+
+    W = U @ np.diag(1/np.sqrt(eig_S))
+
+    H_red = W.conj().T @ H @ W
+
+    eigenvalues, Y = np.linalg.eigh(H_red)
+
+    eigenvectors = W @ Y
+
+    return eigenvalues, eigenvectors
 
 
 def metrique_rk(N):
@@ -524,108 +581,55 @@ def met_k(state1, state2, N):
 
 def met_m(order, state1, state2, N):
 
-    state1_up = state1[:N]
+    state1_up   = state1[:N]
     state1_down = state1[N:]
-    
-    n_up1 = sum(state1_up)
-    n_down1 = sum(state1_down)
 
-    state2_up = state2[:N]
+    state2_up   = state2[:N]
     state2_down = state2[N:]
+
+    n_up   = np.count_nonzero(state1_up)
+    n_down = np.count_nonzero(state1_down)
+
+    if (n_up != np.count_nonzero(state2_up) or
+        n_down != np.count_nonzero(state2_down)):
+        return 0.0
+
+    if order == "rk":
+
+        r_up   = np.flatnonzero(state1_up)
+        k_up   = np.flatnonzero(state2_up)
+
+        r_down = np.flatnonzero(state1_down)
+        k_down = np.flatnonzero(state2_down)
+
+        factor = 1j * (2*np.pi/N)
+
+    elif order == "kr":
+
+        k_up   = np.flatnonzero(state1_up)
+        r_up   = np.flatnonzero(state2_up)
+
+        k_down = np.flatnonzero(state1_down)
+        r_down = np.flatnonzero(state2_down)
+
+        factor = -1j * (2*np.pi/N)
+
+    det_up = np.linalg.det(np.exp(factor * np.outer(r_up, k_up)))
+    det_down = np.linalg.det(np.exp(factor * np.outer(r_down, k_down)))
+
+    return N**(-(n_up+n_down)/2) * det_up * det_down
+
+
+
+def ground_energy(states, N, t=1, U=2):   
     
-    n_up2 = sum(state2_up)
-    n_down2 = sum(state2_down)
-
-    if n_up1 != n_up2 or n_down1 != n_down2:
-
-        S = 0
-
-        return S
-
-
-    matrice_up = np.zeros((n_up1, n_up1), dtype=complex)
-    matrice_down = np.zeros((n_down1, n_down1), dtype=complex)
-
-    r_up = []
-    k_up = []
-    r_down = []
-    k_down = []
-
-    for i in range(N):
-
-        if order == "rk":
-
-            if state1_up[i] == 1:
-
-                k_up.append(i)
-
-            if state2_up[i] == 1:
-
-                r_up.append((2*np.pi*i)/N)
-
-            if state1_down[i] == 1:
-
-                k_down.append(i)
-
-            if state2_down[i] == 1:
-
-                r_down.append((2*np.pi*i)/N)
-
-        elif order == "kr":
-
-            if state1_up[i] == 1:
-
-                r_up.append((2*np.pi*i)/N)
-
-            if state2_up[i] == 1:
-
-                k_up.append(i)
-
-            if state1_down[i] == 1:
-
-                r_down.append((2*np.pi*i)/N)
-
-            if state2_down[i] == 1:
-
-                k_down.append(i)
-        
-
-    for i in range(n_up1):
-        for j in range(n_up1):
-
-            if order == "rk":
-
-                matrice_up[i, j] = np.exp(1j*r_up[i]*k_up[j])
-
-            elif order == "kr":
-
-                matrice_up[i, j] = np.exp(-1j*k_up[i]*r_up[j])
-
-    for i in range(n_down1):
-        for j in range(n_down1):
-
-            if order == "rk":
-
-                matrice_down[i, j] = np.exp(1j*r_down[i]*k_down[j])
-
-            elif order == "kr":
-
-                matrice_down[i, j] = np.exp(-1j*k_down[i]*r_down[j])
-
-    S = N ** (-1/2*(n_up1+n_down1)) * np.linalg.det(matrice_up) * np.linalg.det(matrice_down)
-
-    return S
-
-
-def ground_energy(states, N, t=1, U=2):
-
     dim = len(states)
 
     H = np.zeros((dim, dim), dtype=complex)
     S = np.zeros((dim, dim), dtype=complex)
 
     for i in range(len(states)):
-        for j in range(len(states)):
+        for j in range(i, len(states)):
 
             if states[i].type == "r" and states[j].type == "r":
                 
@@ -646,46 +650,62 @@ def ground_energy(states, N, t=1, U=2):
                 
                 H[i, j] = ham_k(states[i].vector, states[j].vector, N, t, U)
                 S[i, j] = met_k(states[i].vector, states[j].vector, N)
+    
+    new_H = H + H.conj().T
+    np.fill_diagonal(new_H, np.diag(H).real)
 
+    new_S = S + S.conj().T
+    np.fill_diagonal(new_S, np.diag(S).real)
 
-    eigenvalues, eigenvectors = sp.linalg.eigh(H, S)
+    eig_S = np.linalg.eigh(new_S)[0]
 
-    return eigenvalues, H, S
+    if np.any(np.isclose(eig_S, 0, atol=1e-6)):
+        
+        eigenvalues, eigenvectors = gen_diagonalization(new_H, new_S)        
+        overfilled = True
 
+    else:
 
+        eigenvalues, eigenvectors = sp.linalg.eigh(new_H, new_S)
+        overfilled = False
 
-def connected_component(H, start):
-
-    n = H.shape[0]
-    visited = set([start])
-    queue = deque([start])
-
-    while queue:
-        i = queue.popleft()
-
-        neighbors = np.where(H[i] != 0)[0]
-
-        for j in neighbors:
-            if j not in visited:
-                visited.add(int(j))
-                queue.append(j)
-
-    return visited
+    return eigenvalues, new_H, new_S, eigenvectors.T, overfilled
 
 
 
-def all_components(H):
-    n = H.shape[0]
-    visited = set()
-    components = []
 
-    for i in range(n):
-        if i not in visited:
-            comp = connected_component(H, i)
-            components.append(comp)
-            visited |= comp
+## Test 2-sites : 3 etats
 
-    return components
+
+etats = [5, 6, 9, 10]
+
+states_r = []
+states_k = []
+states = []
+
+for element in etats:
+    ket_r = Ket(list(map(int, format(element, f'0{4}b'))), "r", str(element) + "r")
+    ket_k = Ket(list(map(int, format(element, f'0{4}b'))), "k", str(element) + "k")
+
+    states.append(ket_r)
+    states_r.append(ket_r)
+    states.append(ket_k)
+    states_k.append(ket_k)
+
+
+def test_2(t=1, U=2):
+
+    for etats in combinations(states, 3):
+        
+        E0 = min(ground_energy(list(etats), 2, t, U)[0])
+
+        if E0 < -3.12:
+
+            print([s.name for s in etats])
+            print(round(E0, 5))
+
+
+#test_2() 
 
 
 
@@ -714,7 +734,7 @@ def all_components(H):
 #    for el in eigvals:
 #        fund_r.append(el)
 #
-#    print(eigvals)
+#    print(min(eigvals))
 #
 #print(sorted(fund_r))
 #
@@ -740,121 +760,329 @@ def all_components(H):
 #    for el in eigvals:
 #        fund_k.append(el)
 #
-#    print(eigvals)
+#    print(min(eigvals))
 #
 #print(sorted(fund_k))
 
 
 
-## Test 4-sites : etat mixte de 6 etats (2r, 4k)
+
+## Test 4-sites : base mixte de 2 a 8 etats (tests si mieux que k pur)
 
 
-#etats = [51, 53, 54, 57, 58, 60, 83, 85, 86, 89, 90, 92, 99, 101, 102, 105, 106, 108, 147, 149, 150, 153, 154, 156, 163, 165, 166, 169, 170, 172, 195, 197, 198, 201, 202, 204]
-#
-#etats1 = [51, 60, 90, 102, 105, 150, 153, 165, 195, 204]
-#etats2 = [53, 83, 92, 106, 154, 166, 169, 197]
-#etats3 = [54, 57, 85, 99, 108, 147, 156,  170, 198, 201]
-#etats4 = [58, 86, 89, 101, 149, 163, 172, 202]
-#
-#states_r1 = []
-#states_r2 = []
-#states_r3 = []
-#states_r4 = []
-#states_k1 = []
-#states_k2 = []
-#states_k3 = []
-#states_k4 = []
-#
-#states = []
-#
-#for element in etats1:
-#    ket_r = Ket(list(map(int, format(element, f'0{8}b'))), "r", str(element) + "r")
-#    ket_k = Ket(list(map(int, format(element, f'0{8}b'))), "k", str(element) + "k")
-#
-#    states_r1.append(ket_r)
-#    states_k1.append(ket_k)
-#
-#for element in etats2:
-#    ket_r = Ket(list(map(int, format(element, f'0{8}b'))), "r", str(element) + "r")
-#    ket_k = Ket(list(map(int, format(element, f'0{8}b'))), "k", str(element) + "k")
-#
-#    states_r2.append(ket_r)
-#    states_k2.append(ket_k)
-#
-#for element in etats3:
-#    ket_r = Ket(list(map(int, format(element, f'0{8}b'))), "r", str(element) + "r")
-#    ket_k = Ket(list(map(int, format(element, f'0{8}b'))), "k", str(element) + "k")
-#
-#    states_r3.append(ket_r)
-#    states_k3.append(ket_k)
-#
-#for element in etats4:
-#    ket_r = Ket(list(map(int, format(element, f'0{8}b'))), "r", str(element) + "r")
-#    ket_k = Ket(list(map(int, format(element, f'0{8}b'))), "k", str(element) + "k")
-#
-#    states_r4.append(ket_r)
-#    states_k4.append(ket_k)
-#
-#
-#
-#def test_4(t=1, U=2):
-#
-#    for etats_r in combinations(states_r1, 2):
-#
-#        states = []
-#    
-#        for e in etats_r:
-#            states.append(e)
-#    
-#        for etats_k in combinations(states_k1, 4):
-#
-#            new_states = states.copy()
-#        
-#            for e in etats_k:
-#                new_states.append(e)
-#
-#            E0 = min(ground_energy(new_states, 4, 1, 2)[0])
-#
-#            if E0 < -2.8:
-#
-#                print([s.name for s in new_states])
-#                print(round(E0, 5))
-#
-#
+etats = [51, 53, 54, 57, 58, 60, 83, 85, 86, 89, 90, 92, 99, 101, 102, 105, 106, 108, 147, 149, 150, 153, 154, 156, 163, 165, 166, 169, 170, 172, 195, 197, 198, 201, 202, 204]
+
+etats1 = [51, 60, 90, 102, 105, 150, 153, 165, 195, 204]
+etats2 = [53, 83, 92, 106, 154, 166, 169, 197]
+etats3 = [54, 57, 85, 99, 108, 147, 156,  170, 198, 201]
+etats4 = [58, 86, 89, 101, 149, 163, 172, 202]
+
+states_r1 = []
+states_r2 = []
+states_r3 = []
+states_r4 = []
+states_k1 = []
+states_k2 = []
+states_k3 = []
+states_k4 = []
+
+states_r = []
+states_k = []
+
+ensemble_minimal = []
+
+states = []
+
+for element in etats1:
+    ket_r = Ket(list(map(int, format(element, f'0{8}b'))), "r", str(element) + "r")
+    ket_k = Ket(list(map(int, format(element, f'0{8}b'))), "k", str(element) + "k")
+
+    states_r1.append(ket_r)
+    states_r.append(ket_r)
+    states_k1.append(ket_k)
+    states_k.append(ket_k)
+
+    if element in [90, 165]:
+        ensemble_minimal.append(ket_r)
+        ensemble_minimal.append(ket_k)
+    
+    elif element in [153, 204]:
+        ensemble_minimal.append(ket_k)
+
+for element in etats2:
+    ket_r = Ket(list(map(int, format(element, f'0{8}b'))), "r", str(element) + "r")
+    ket_k = Ket(list(map(int, format(element, f'0{8}b'))), "k", str(element) + "k")
+
+    states_r2.append(ket_r)
+    states_r.append(ket_r)
+    states_k2.append(ket_k)
+    states_k.append(ket_k)
+
+for element in etats3:
+    ket_r = Ket(list(map(int, format(element, f'0{8}b'))), "r", str(element) + "r")
+    ket_k = Ket(list(map(int, format(element, f'0{8}b'))), "k", str(element) + "k")
+
+    states_r3.append(ket_r)
+    states_r.append(ket_r)
+    states_k3.append(ket_k)
+    states_k.append(ket_k)
+
+for element in etats4:
+    ket_r = Ket(list(map(int, format(element, f'0{8}b'))), "r", str(element) + "r")
+    ket_k = Ket(list(map(int, format(element, f'0{8}b'))), "k", str(element) + "k")
+
+    states_r4.append(ket_r)
+    states_r.append(ket_r)
+    states_k4.append(ket_k)
+    states_k.append(ket_k)
+
+
+def best_k(states_k, t=1, U=2):
+
+    E = []
+
+    for i in range(4, 11):
+
+        E_i = []
+
+        for etats_k in combinations(states_k, i):
+
+            E0 = min(ground_energy(list(etats_k), 4, t, U)[0])
+            
+            E_i.append(E0)
+
+        E.append(min(E_i))
+
+    return E
+
+
+
+def test_4(t=1, U=2):
+
+    result = best_k(states_k1)
+
+    best = result[:-1]
+    fund = result[-1]
+
+    for i in range(1, 8):
+        for j in range(1, 8):
+
+            if i + j <= 8:
+               
+                print(f"\033[1;36m{i} etats en r et {j} etats en k\n\033[0m")
+
+                for etats_r in combinations(states_r1, i):
+
+                    states = []
+    
+                    for e in etats_r:
+                        states.append(e)
+    
+                    for etats_k in combinations(states_k1, j):
+
+                        new_states = states.copy()
+        
+                        for e in etats_k:
+                            new_states.append(e)
+
+                        energies, _, _, _, overfilled = ground_energy(new_states, 4, t, U)
+
+                        if set(new_states) == set(ensemble_minimal):
+                            
+                            E0 = min(energies)
+
+                            print("Energie fondamentale\n")
+                            print([s.name for s in new_states])
+                            print(round(E0, 5))
+                            print("\n")
+
+                        elif set(ensemble_minimal).issubset(new_states):
+                            continue
+
+                        elif overfilled:
+
+                            print("Base surcomplete\n")
+                            print([s.name for s in new_states])
+                            print("\n")
+                        
+                        elif np.isclose(min(energies), fund):
+                        
+                            print("Energie fondamentale\n")
+                            print([s.name for s in new_states])
+                            print(round(fund, 5))
+                            print("\n")
+
+                        else:
+
+                            E0 = min(energies)
+                            
+                            for ind, E in zip(range(9, 3, -1), reversed(best)):
+
+                                if E0 < E and i + j < ind:
+                
+                                    print(f"Mieux que {ind} etats k\n")
+                                    print([s.name for s in new_states])
+                                    print(round(E0, 5))
+                                    print("\n")
+                                    
+                                    break
+
 #test_4()
 
 
 
-## Test 2-sites : 3 etats
+## Test 4-sites : energie fondamentale et etat fondamental
 
 
-#etats = [5, 6, 9, 10]
-#
-#states_r = []
-#states_k = []
-#states = []
-#
-#for element in etats:
-#    ket_r = Ket(list(map(int, format(element, f'0{4}b'))), "r", str(element) + "r")
-#    ket_k = Ket(list(map(int, format(element, f'0{4}b'))), "k", str(element) + "k")
-#
-#    states.append(ket_r)
-#    states_r.append(ket_r)
-#    states.append(ket_k)
-#    states_k.append(ket_k)
-#
-#
-#def test_2(t=1, U=2):
-#
-#    for etats in combinations(states, 3):
-#        
-#        E0 = min(ground_energy(list(etats), 2, t, U)[0])
-#
-#        if E0 < -3.12:
-#
-#            print([s.name for s in etats])
-#            print(round(E0, 5))
-#
-#
-#test_2() 
+r = [85, 90, 165, 170]
+k = [102, 105, 150, 153]
+
+
+
+def mixte4(r, k, t=1, U=2):
+    
+    debut = time.perf_counter()
+
+    states = []
+
+    for r in r:
+    
+        ket_r = Ket(list(map(int, format(r, f'0{8}b'))), "r", str(r) + "r")
+        states.append(ket_r)
+
+    for k in k:
+
+        ket_k = Ket(list(map(int, format(k, f'0{8}b'))), "k", str(k) + "k")
+        states.append(ket_k)
+
+    E, H, S, v, overfilled = ground_energy(states, 4, t, U)
+
+    E0 = min(E)
+
+    omega = v[np.argmin(E)]
+
+    fin = time.perf_counter()
+
+    print(states)
+    if overfilled == True:
+        print("\n")
+        print("BASE SURCOMPLETE")
+    print("\n")
+    print("Energie fondamentale : ", round(E0, 5))
+    print("\n")
+    print("H = \n", H)
+    print("\n")
+    print("S = \n", S)
+    print("\n")
+    print("Etat fondamental : ", omega)
+
+    print("\n")
+    print(f"Temps d'exécution total : {fin - debut:.6f} s")
+
+    return E0, H, S, omega
+
+
+#mixte4(r, k)
+
+
+
+
+## Test 6-sites : base mixte
+
+
+H_r = hamiltonian_r(6)
+
+comps_r = all_components(H_r)
+
+fund_r = []
+
+for c in comps_r:
+
+    if len(c) == (math.factorial(6) ** 2) / (math.factorial(3) ** 4):
+
+        #print(c)
+
+        r_set = c.copy()
+
+        S_sorted = sorted(c)
+        H_sub = H_r[np.ix_(S_sorted, S_sorted)]
+
+        eigvals = []
+
+        for val in np.linalg.eigvals(H_sub): 
+            eigvals.append(float(round(val.real, 5)))
+
+        for el in eigvals:
+            fund_r.append(el)
+
+
+        #print(sorted(eigvals))
+
+        break
+
+
+    
+H_k = hamiltonian_k(6)
+
+comps_k = all_components(H_k)
+
+fund_k = []
+
+for c in comps_k:
+
+    if c.issubset(r_set):
+
+        #print(c)
+
+        S_sorted = sorted(c)
+        H_sub = H_k[np.ix_(S_sorted, S_sorted)]
+
+        eigvals = []
+
+        for val in np.linalg.eigvals(H_sub): 
+            eigvals.append(float(round(val.real, 5)))
+
+        for el in eigvals:
+            fund_k.append(el)
+
+        #print(min(eigvals))
+    
+        if min(eigvals) < -5.4:
+            states_k1 = list(c)
+
+
+#print(sorted(fund_k))
+
+
+states = []
+states_k = []
+
+for element in [1386, 2709]:
+    ket_r = Ket(list(map(int, format(element, f'0{12}b'))), "r", str(element) + "r")
+    states.append(ket_r)
+
+for element in states_k1:
+    ket_k = Ket(list(map(int, format(element, f'0{12}b'))), "k", str(element) + "k")
+    states_k.append(ket_k)
+
+for etats_k in combinations(states_k, 8):
+    
+    new_states = states.copy()
+
+    for el in etats_k:
+        new_states.append(el)
+
+    E0 = min(ground_energy(new_states, 6, 1, 2)[0])
+
+    if E0 < -5.1:
+        
+        print("Energie fondamentale")
+        print("\n")
+        print([s.name for s in new_states])
+        print(round(E0, 5))
+        print("\n")
+
+
+
+
 

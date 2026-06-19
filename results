@@ -1,0 +1,104 @@
+[1;36m1 etats en r et 1 etats en k
+[0m
+[1;36m1 etats en r et 2 etats en k
+[0m
+[1;36m1 etats en r et 3 etats en k
+[0m
+[1;36m1 etats en r et 4 etats en k
+[0m
+Mieux que 6 etats k
+
+['90r', '90k', '153k', '165k', '204k']
+-2.77671
+
+
+Mieux que 6 etats k
+
+['165r', '90k', '153k', '165k', '204k']
+-2.77671
+
+
+[1;36m1 etats en r et 5 etats en k
+[0m
+Mieux que 7 etats k
+
+['90r', '51k', '90k', '153k', '165k', '204k']
+-2.78315
+
+
+Mieux que 7 etats k
+
+['90r', '90k', '102k', '153k', '165k', '204k']
+-2.78315
+
+
+Mieux que 7 etats k
+
+['165r', '51k', '90k', '153k', '165k', '204k']
+-2.78315
+
+
+Mieux que 7 etats k
+
+['165r', '90k', '102k', '153k', '165k', '204k']
+-2.78315
+
+
+[1;36m1 etats en r et 6 etats en k
+[0m
+[1;36m1 etats en r et 7 etats en k
+[0m
+[1;36m2 etats en r et 1 etats en k
+[0m
+[1;36m2 etats en r et 2 etats en k
+[0m
+[1;36m2 etats en r et 3 etats en k
+[0m
+[1;36m2 etats en r et 4 etats en k
+[0m
+Energie fondamentale
+
+['90r', '165r', '90k', '153k', '165k', '204k']
+-2.82843
+
+
+[1;36m2 etats en r et 5 etats en k
+[0m
+[1;36m2 etats en r et 6 etats en k
+[0m
+[1;36m3 etats en r et 1 etats en k
+[0m
+[1;36m3 etats en r et 2 etats en k
+[0m
+[1;36m3 etats en r et 3 etats en k
+[0m
+[1;36m3 etats en r et 4 etats en k
+[0m
+[1;36m3 etats en r et 5 etats en k
+[0m
+[1;36m4 etats en r et 1 etats en k
+[0m
+[1;36m4 etats en r et 2 etats en k
+[0m
+[1;36m4 etats en r et 3 etats en k
+[0m
+[1;36m4 etats en r et 4 etats en k
+[0m
+Energie fondamentale
+
+['51r', '102r', '153r', '204r', '51k', '102k', '153k', '204k']
+-2.82843
+
+
+[1;36m5 etats en r et 1 etats en k
+[0m
+[1;36m5 etats en r et 2 etats en k
+[0m
+[1;36m5 etats en r et 3 etats en k
+[0m
+[1;36m6 etats en r et 1 etats en k
+[0m
+[1;36m6 etats en r et 2 etats en k
+[0m
+[1;36m7 etats en r et 1 etats en k
+[0m
