@@ -15,6 +15,9 @@ class Ket:
         self.name = name
         self.type = typ
 
+    def number(self):
+        return int("".join(map(str, self.vector)), 2)
+
     def __repr__(self):
         return self.name if self.name is not None else "Ket"
 
@@ -75,6 +78,17 @@ def gen_diagonalization(H, S, eps=1e-6):
     return eigenvalues, eigenvectors
 
 
+
+def metrique_r(N):
+    return np.identity(4**N, dtype=int)
+
+
+
+def metrique_k(N):
+    return np.identity(4**N, dtype=int)
+
+
+
 def metrique_rk(N):
 
     dim = 4**N
@@ -83,7 +97,7 @@ def metrique_rk(N):
     occ = ((np.arange(dim)[:, None] >> np.arange(2*N)) & 1)[:, ::-1]
 
     indices = np.arange(2*N)
-    F = np.exp(-2j * np.pi * np.outer(indices, indices) / N)
+    F = np.exp(2j * np.pi * np.outer(indices, indices) / N)
 
     for r in range(dim):
         occ_r = occ[r]
@@ -109,12 +123,14 @@ def metrique_rk(N):
     return matrice
 
 
+
 def metrique_m(N):
 
     dim = N
     matrice = np.zeros((dim, dim), dtype=complex)
     
     return matrice
+
 
 
 def hamiltonian_r(N, t=1, U=2):
@@ -226,6 +242,7 @@ def hamiltonian_r(N, t=1, U=2):
     return H
 
 
+
 def hamiltonian_k(N, t=1, U=2):
 
     dim = 4 ** N
@@ -298,6 +315,50 @@ def hamiltonian_k(N, t=1, U=2):
                                         H[i0, j0] = U/N * (-1) ** (sum(element_up[:i]) + sum(element_up[:j]) + sum(element_down[:k]) + sum(element_down[:(N+k-q)]) - zwizz)
                                         
     return H
+
+
+
+def hamiltonian_rk(N, t=1, U=2):
+
+    dim = 4 ** N
+
+    H_t = np.zeros(dim, dtype=float)
+    H_U = np.zeros(dim, dtype=float)
+
+    etats = [list(map(int, format(i, f'0{2*N}b'))) for i in range(dim)]
+
+    index = {tuple(e): k for k, e in enumerate(etats)}
+
+
+    for i in range(dim):     
+        for j in range(N):
+        
+            H_t[i] += -2*t * np.cos((2*np.pi*j)/N) * (etats[i][j] + etats[i][j+N])
+            H_U[i] += U * etats[i][j] * etats[i][j+N]
+
+    return np.add.outer(H_t, H_U)
+
+
+
+def complete_matrixes(N, t=1, U=2):
+
+    S_r = metrique_r(N)
+    S_k = metrique_k(N)
+    S_rk = metrique_rk(N)
+    S_kr = S_rk.conj().T
+
+    S = np.block([[S_r,  S_kr],
+                  [S_rk, S_k]])
+
+    H_r = hamiltonian_r(N, t, U)
+    H_k = hamiltonian_k(N, t, U)
+    H_rk = np.multiply(hamiltonian_rk(N, t, U), metrique_rk(N))
+    H_kr = H_rk.conj().T
+
+    H = np.block([[H_r,  H_kr],
+                  [H_rk, H_k]])
+
+    return H, S
 
 
 
@@ -499,11 +560,7 @@ def ham_r(state1, state2, N, t=1, U=2):
 
 
 
-def ham_m(order, state1, state2, N, t=1, U=2):
-
-    """
-    Ordre rk ou kr des états state1 et state2
-    """
+def ham_rk(order, state1, state2, N, t=1, U=2):
 
     state1_up = state1[:N]
     state1_down = state1[N:]
@@ -548,9 +605,10 @@ def ham_m(order, state1, state2, N, t=1, U=2):
             H_U += U * state2[i] * state2[i + N]
             
 
-    H = met_m(order, state1, state2, N) * (H_t + H_U)
+    H = met_rk(order, state1, state2, N) * (H_t + H_U)
     
     return H
+
 
 
 def met_r(state1, state2, N):
@@ -579,7 +637,7 @@ def met_k(state1, state2, N):
     return S
 
 
-def met_m(order, state1, state2, N):
+def met_rk(order, state1, state2, N):
 
     state1_up   = state1[:N]
     state1_down = state1[N:]
@@ -602,7 +660,7 @@ def met_m(order, state1, state2, N):
         r_down = np.flatnonzero(state1_down)
         k_down = np.flatnonzero(state2_down)
 
-        factor = 1j * (2*np.pi/N)
+        factor = -1j * (2*np.pi/N)
 
     elif order == "kr":
 
@@ -612,7 +670,7 @@ def met_m(order, state1, state2, N):
         k_down = np.flatnonzero(state1_down)
         r_down = np.flatnonzero(state2_down)
 
-        factor = -1j * (2*np.pi/N)
+        factor = 1j * (2*np.pi/N)
 
     det_up = np.linalg.det(np.exp(factor * np.outer(r_up, k_up)))
     det_down = np.linalg.det(np.exp(factor * np.outer(r_down, k_down)))
@@ -628,8 +686,8 @@ def ground_energy(states, N, t=1, U=2):
     H = np.zeros((dim, dim), dtype=complex)
     S = np.zeros((dim, dim), dtype=complex)
 
-    for i in range(len(states)):
-        for j in range(i, len(states)):
+    for i in range(dim):
+        for j in range(i, dim):
 
             if states[i].type == "r" and states[j].type == "r":
                 
@@ -638,13 +696,13 @@ def ground_energy(states, N, t=1, U=2):
 
             elif states[i].type == "r" and states[j].type == "k":
                 
-                H[i, j] = ham_m("rk", states[i].vector, states[j].vector, N, t, U)
-                S[i, j] = met_m("rk", states[i].vector, states[j].vector, N)
+                H[i, j] = ham_rk("rk", states[i].vector, states[j].vector, N, t, U)
+                S[i, j] = met_rk("rk", states[i].vector, states[j].vector, N)
 
             elif states[i].type == "k" and states[j].type == "r":
                 
-                H[i, j] = ham_m("kr", states[i].vector, states[j].vector, N, t, U)
-                S[i, j] = met_m("kr", states[i].vector, states[j].vector, N)
+                H[i, j] = ham_rk("kr", states[i].vector, states[j].vector, N, t, U)
+                S[i, j] = met_rk("kr", states[i].vector, states[j].vector, N)
 
             elif states[i].type == "k" and states[j].type == "k":
                 
@@ -671,6 +729,35 @@ def ground_energy(states, N, t=1, U=2):
 
     return eigenvalues, new_H, new_S, eigenvectors.T, overfilled
 
+
+
+
+def optimized_ground_energy(states, H, S, N, t=1, U=2):
+
+    n = []
+    
+    for element in states:
+        if element.type == "r":
+            n.append(element.number())
+        if element.type == "k":
+            n.append(element.number() + 4**N)
+
+    new_H = H[np.ix_(n, n)]
+    new_S = S[np.ix_(n, n)]
+
+    eig_S = np.linalg.eigh(new_S)[0]
+
+    if np.any(np.isclose(eig_S, 0, atol=1e-6)):
+        
+        eigenvalues, eigenvectors = gen_diagonalization(new_H, new_S)        
+        overfilled = True
+
+    else:
+
+        eigenvalues, eigenvectors = sp.linalg.eigh(new_H, new_S)
+        overfilled = False
+
+    return eigenvalues, new_H, new_S, eigenvectors.T, overfilled
 
 
 
@@ -864,6 +951,8 @@ def test_4(t=1, U=2):
     best = result[:-1]
     fund = result[-1]
 
+    H, S = complete_matrixes(4, t, U)
+
     for i in range(1, 8):
         for j in range(1, 8):
 
@@ -871,7 +960,7 @@ def test_4(t=1, U=2):
                
                 print(f"\033[1;36m{i} etats en r et {j} etats en k\n\033[0m")
 
-                for etats_r in combinations(states_r1, i):
+                for etats_r in combinations(states_r, i):
 
                     states = []
     
@@ -885,7 +974,7 @@ def test_4(t=1, U=2):
                         for e in etats_k:
                             new_states.append(e)
 
-                        energies, _, _, _, overfilled = ground_energy(new_states, 4, t, U)
+                        energies, _, _, _, overfilled = optimized_ground_energy(new_states, H, S, 4, t, U)
 
                         if set(new_states) == set(ensemble_minimal):
                             
@@ -934,7 +1023,7 @@ def test_4(t=1, U=2):
 ## Test 4-sites : energie fondamentale et etat fondamental
 
 
-r = [85, 90, 165, 170]
+r = [90, 165, 85, 170]
 k = [102, 105, 150, 153]
 
 
@@ -963,6 +1052,7 @@ def mixte4(r, k, t=1, U=2):
 
     fin = time.perf_counter()
 
+
     print(states)
     if overfilled == True:
         print("\n")
@@ -982,6 +1072,7 @@ def mixte4(r, k, t=1, U=2):
     return E0, H, S, omega
 
 
+
 #mixte4(r, k)
 
 
@@ -990,99 +1081,150 @@ def mixte4(r, k, t=1, U=2):
 ## Test 6-sites : base mixte
 
 
-H_r = hamiltonian_r(6)
-
-comps_r = all_components(H_r)
-
-fund_r = []
-
-for c in comps_r:
-
-    if len(c) == (math.factorial(6) ** 2) / (math.factorial(3) ** 4):
-
-        #print(c)
-
-        r_set = c.copy()
-
-        S_sorted = sorted(c)
-        H_sub = H_r[np.ix_(S_sorted, S_sorted)]
-
-        eigvals = []
-
-        for val in np.linalg.eigvals(H_sub): 
-            eigvals.append(float(round(val.real, 5)))
-
-        for el in eigvals:
-            fund_r.append(el)
-
-
-        #print(sorted(eigvals))
-
-        break
-
-
-    
-H_k = hamiltonian_k(6)
-
-comps_k = all_components(H_k)
-
-fund_k = []
-
-for c in comps_k:
-
-    if c.issubset(r_set):
-
-        #print(c)
-
-        S_sorted = sorted(c)
-        H_sub = H_k[np.ix_(S_sorted, S_sorted)]
-
-        eigvals = []
-
-        for val in np.linalg.eigvals(H_sub): 
-            eigvals.append(float(round(val.real, 5)))
-
-        for el in eigvals:
-            fund_k.append(el)
-
-        #print(min(eigvals))
-    
-        if min(eigvals) < -5.4:
-            states_k1 = list(c)
-
-
+#H_r = hamiltonian_r(6)
+#
+#comps_r = all_components(H_r)
+#
+#fund_r = []
+#
+#for c in comps_r:
+#
+#    if len(c) == (math.factorial(6) ** 2) / (math.factorial(3) ** 4):
+#
+#        #print(c)
+#
+#        r_set = c.copy()
+#
+#        S_sorted = sorted(c)
+#        H_sub = H_r[np.ix_(S_sorted, S_sorted)]
+#
+#        eigvals = []
+#
+#        for val in np.linalg.eigvals(H_sub): 
+#            eigvals.append(float(round(val.real, 5)))
+#
+#        for el in eigvals:
+#            fund_r.append(el)
+#
+#
+#        #print(sorted(eigvals))
+#
+#        break
+#
+#
+#    
+#H_k = hamiltonian_k(6)
+#
+#comps_k = all_components(H_k)
+#
+#fund_k = []
+#
+#for c in comps_k:
+#
+#    if c.issubset(r_set):
+#
+#        #print(c)
+#
+#        S_sorted = sorted(c)
+#        H_sub = H_k[np.ix_(S_sorted, S_sorted)]
+#
+#        eigvals = []
+#
+#        for val in np.linalg.eigvals(H_sub): 
+#            eigvals.append(float(round(val.real, 5)))
+#
+#        for el in eigvals:
+#            fund_k.append(el)
+#
+#        #print(min(eigvals))
+#    
+#        if min(eigvals) < -5.4:
+#            states_k1 = list(c)
+#
+#
 #print(sorted(fund_k))
+#
+#
+#states = []
+#states_k = []
+#
+#for element in [1386, 2709]:
+#    ket_r = Ket(list(map(int, format(element, f'0{12}b'))), "r", str(element) + "r")
+#    states.append(ket_r)
+#
+#for element in states_k1:
+#    ket_k = Ket(list(map(int, format(element, f'0{12}b'))), "k", str(element) + "k")
+#    states_k.append(ket_k)
+#
+#for etats_k in combinations(states_k, 8):
+#    
+#    new_states = states.copy()
+#
+#    for el in etats_k:
+#        new_states.append(el)
+#
+#    E0 = min(ground_energy(new_states, 6, 1, 2)[0])
+#
+#    if E0 < -5.1:
+#        
+#        print("Energie fondamentale")
+#        print("\n")
+#        print([s.name for s in new_states])
+#        print(round(E0, 5))
+#        print("\n")
 
 
-states = []
-states_k = []
 
-for element in [1386, 2709]:
-    ket_r = Ket(list(map(int, format(element, f'0{12}b'))), "r", str(element) + "r")
-    states.append(ket_r)
 
-for element in states_k1:
-    ket_k = Ket(list(map(int, format(element, f'0{12}b'))), "k", str(element) + "k")
-    states_k.append(ket_k)
+## Test 6-sites : energie fondamentale et etat fondamental
 
-for etats_k in combinations(states_k, 8):
+
+r = [1386, 2709]
+k = [3185, 1386, 2709, 1356, 2454, 563, 2351]
+
+
+
+def mixte6(r, k, t=1, U=2):
     
-    new_states = states.copy()
+    debut = time.perf_counter()
 
-    for el in etats_k:
-        new_states.append(el)
+    states = []
 
-    E0 = min(ground_energy(new_states, 6, 1, 2)[0])
+    for r in r:
+    
+        ket_r = Ket(list(map(int, format(r, f'0{12}b'))), "r", str(r) + "r")
+        states.append(ket_r)
 
-    if E0 < -5.1:
-        
-        print("Energie fondamentale")
+    for k in k:
+
+        ket_k = Ket(list(map(int, format(k, f'0{12}b'))), "k", str(k) + "k")
+        states.append(ket_k)
+
+    E, H, S, v, overfilled = ground_energy(states, 6, t, U)
+
+    E0 = min(E)
+
+    omega = v[np.argmin(E)]
+
+    fin = time.perf_counter()
+
+    print(states)
+    if overfilled == True:
         print("\n")
-        print([s.name for s in new_states])
-        print(round(E0, 5))
-        print("\n")
+        print("BASE SURCOMPLETE")
+    print("\n")
+    print("Energie fondamentale : ", round(E0, 5))
+    print("\n")
+    print("H = \n", H)
+    print("\n")
+    print("S = \n", S)
+    print("\n")
+    print("Etat fondamental : ", omega)
+
+    print("\n")
+    print(f"Temps d'exécution total : {fin - debut:.6f} s")
+
+    return E0, H, S, omega
 
 
-
-
-
+#mixte6(r, k)
