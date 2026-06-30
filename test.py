@@ -1,9 +1,10 @@
+import os
 import math
 import numpy as np
 import scipy as sp
 import matplotlib.pyplot as plt
 import time
-from itertools import combinations
+from itertools import combinations, product
 from collections import deque
 
 np.set_printoptions(precision=5, linewidth=150, suppress=True)
@@ -58,6 +59,27 @@ def all_components(H):
 
 
 
+def get_H_S(N, t=1, U=2):
+
+    H_file = f"H_{N}_{t}_{U}.npy"
+    S_file = f"S_{N}_{t}_{U}.npy"
+
+    if os.path.exists(H_file) and os.path.exists(S_file):
+
+        H = np.load(H_file)
+        S = np.load(S_file)
+        
+        return H, S
+
+    H, S = complete_matrixes(N, t, U)
+
+    np.save(H_file, H)
+    np.save(S_file, S)
+
+    return H, S
+
+
+
 def gen_diagonalization(H, S, eps=1e-6):
 
     eig_S, U = np.linalg.eigh(S)
@@ -76,6 +98,146 @@ def gen_diagonalization(H, S, eps=1e-6):
     eigenvectors = W @ Y
 
     return eigenvalues, eigenvectors
+
+
+
+def split_state(state, N):
+
+    r_up, k_up, r_down, k_down = (state[i*N:(i+1)*N] for i in range(4))
+
+    return r_up, k_up, r_down, k_down
+
+
+
+def replace_zero_combinations(lst, r, N):
+    lst = np.array(lst)
+    n = sum(r)
+    
+    zero_pos = np.where(lst == 0)[0]
+    one_pos  = np.where(lst == 1)[0]
+
+    k_states = []
+    sigma   = []
+    combs = []
+
+    for c in combinations(zero_pos, n):
+
+        compteur = np.sum(one_pos < np.array(c)[:, None])
+
+        sigma.append(compteur)
+
+        new_lst = lst.copy()
+        new_lst[list(c)] = 1
+        k_states.append(new_lst)
+
+        combs.append(c)
+
+    r_pos = np.flatnonzero(r)
+    factor = 1j * (2*np.pi/N)
+
+    c = []
+
+    for element, s in zip(combs, sigma):
+
+        k_pos = element
+        mat = np.exp(factor * np.outer(r_pos, k_pos))
+        c.append((-1)**s * np.linalg.det(mat))
+
+    return k_states, sigma, c
+
+
+
+def met_m(state1, state2, N):
+
+    r_up1, k_up1, r_down1, k_down1 = split_state(state1, N)
+    r_up2, k_up2, r_down2, k_down2 = split_state(state2, N)
+
+    n_up1 = sum(r_up1) + sum(k_up1)
+    n_down1 = sum(r_down1) + sum(k_down1)
+    n_up2 = sum(r_up2) + sum(k_up2)
+    n_down2 = sum(r_down2) + sum(k_down2)
+
+    if (n_up1 > N or n_up2 > N or n_down1 > N or n_down2 > N
+        or n_up1 != n_up2 or n_down1 != n_down2):
+
+        err = True
+
+        return 0, [], [], [], [], 0, err
+
+    k_up_states1, sig_up1, c_up1       = replace_zero_combinations(k_up1, r_up1, N)
+    k_down_states1, sig_down1, c_down1 = replace_zero_combinations(k_down1, r_down1, N)
+    k_up_states2, sig_up2, c_up2       = replace_zero_combinations(k_up2, r_up2, N)
+    k_down_states2, sig_down2, c_down2 = replace_zero_combinations(k_down2, r_down2, N)
+
+    k_states1 = [list(a) + list(b) for a, b in product(k_up_states1, k_down_states1)]
+    k_states2 = [list(a) + list(b) for a, b in product(k_up_states2, k_down_states2)]
+
+    c1 = [a*b for a, b in product(c_up1, c_down1)]
+    c2 = [a*b for a, b in product(c_up2, c_down2)]
+
+    d2 = {}
+    for j, b in enumerate(k_states2):
+        key = tuple(b)
+        d2.setdefault(key, []).append(j)
+
+    matches = [(i, j) for i, a in enumerate(k_states1) for j in d2.get(tuple(a), [])]
+
+    somme = sum(np.conj(c1[i]) * c2[j] for i, j in matches)
+
+    norm = N**(-0.5 * (sum(r_up1) + sum(r_down1) + sum(r_up2) + sum(r_down2)))
+
+    err = False
+
+    return norm * somme, k_states1, c1, k_states2, c2, norm, err
+ 
+
+
+def m_ground_energy(states, N, t=1, U=2):
+
+    dim = len(states)
+
+    H = np.zeros((dim, dim), dtype=complex)
+    S = np.zeros((dim, dim), dtype=complex)
+
+    for i in range(dim):
+        for j in range(i, dim):
+             
+            S[i, j], k_states1, c1, k_states2, c2, norm, err = met_m(states[i].vector, states[j].vector, N)
+
+            if err == True:
+                
+                H[i, j] = 0
+                
+                continue
+
+            H[i, j] = 0
+
+            for l in range(len(k_states1)):
+                for m in range(len(k_states2)):
+
+                    H[i, j] += np.conj(c1[l]) * c2[m] * ham_k(k_states1[l], k_states2[m], N, t, U)
+
+            H[i, j] = norm * H[i, j]
+    
+    new_H = H + H.conj().T
+    np.fill_diagonal(new_H, np.diag(H).real)
+
+    new_S = S + S.conj().T
+    np.fill_diagonal(new_S, np.diag(S).real)
+
+    eig_S = np.linalg.eigh(new_S)[0]
+
+    if np.any(np.isclose(eig_S, 0, atol=1e-6)):
+        
+        eigenvalues, eigenvectors = gen_diagonalization(new_H, new_S)        
+        overfilled = True
+
+    else:
+
+        eigenvalues, eigenvectors = sp.linalg.eigh(new_H, new_S)
+        overfilled = False
+
+    return eigenvalues, new_H, new_S, eigenvectors.T, overfilled
 
 
 
@@ -120,15 +282,6 @@ def metrique_rk(N):
 
             matrice[r, k] = np.round(el.real, 5) + 1j*np.round(el.imag, 5)
 
-    return matrice
-
-
-
-def metrique_m(N):
-
-    dim = N
-    matrice = np.zeros((dim, dim), dtype=complex)
-    
     return matrice
 
 
@@ -951,7 +1104,7 @@ def test_4(t=1, U=2):
     best = result[:-1]
     fund = result[-1]
 
-    H, S = complete_matrixes(4, t, U)
+    H, S = get_H_S(4, t, U)
 
     for i in range(1, 8):
         for j in range(1, 8):
@@ -1141,7 +1294,6 @@ def mixte4(r, k, t=1, U=2):
 #        if min(eigvals) < -5.4:
 #            states_k1 = list(c)
 #
-#
 #print(sorted(fund_k))
 #
 #
@@ -1153,26 +1305,35 @@ def mixte4(r, k, t=1, U=2):
 #    states.append(ket_r)
 #
 #for element in states_k1:
-#    ket_k = Ket(list(map(int, format(element, f'0{12}b'))), "k", str(element) + "k")
-#    states_k.append(ket_k)
 #
-#for etats_k in combinations(states_k, 8):
+#    if not element in [3185, 3353, 3241, 2275, 3640]:
+#
+#        ket_k = Ket(list(map(int, format(element, f'0{12}b'))), "r", str(element) + "r")
+#        states_k.append(ket_k)
+#
+#    if element in [3185, 3353, 3241, 2275, 3640]:
+#
+#        ket_k = Ket(list(map(int, format(element, f'0{12}b'))), "k", str(element) + "k")
+#        states.append(ket_k)
+#
+#H, S = get_H_S(6, t=1, U=2)
+#
+#for etats_k in combinations(states_k, 5):
 #    
 #    new_states = states.copy()
 #
 #    for el in etats_k:
 #        new_states.append(el)
 #
-#    E0 = min(ground_energy(new_states, 6, 1, 2)[0])
+#    E0 = min(optimized_ground_energy(new_states, H, S, 6, 1, 2)[0])
 #
-#    if E0 < -5.1:
+#    if E0 < -5.1695:
 #        
-#        print("Energie fondamentale")
-#        print("\n")
+#        print("Energie fondamentale\n")
 #        print([s.name for s in new_states])
 #        print(round(E0, 5))
 #        print("\n")
-
+#
 
 
 
@@ -1180,8 +1341,7 @@ def mixte4(r, k, t=1, U=2):
 
 
 r = [1386, 2709]
-k = [3185, 1386, 2709, 1356, 2454, 563, 2351]
-
+k = [3185, 3353, 3241, 3640, 2275, 1253, 1652, 2674, 2296, 1619, 3619, 2387, 2420, 3365]
 
 
 def mixte6(r, k, t=1, U=2):
@@ -1226,5 +1386,66 @@ def mixte6(r, k, t=1, U=2):
 
     return E0, H, S, omega
 
-
 #mixte6(r, k)
+
+
+
+## Test etat mixte 2 sites
+
+etats = np.arange(4**(2*2))
+
+states = []
+
+for element in etats:
+    
+    lst = list(map(int, format(element, f'0{8}b')))
+
+    if sum(lst[:2*2]) != 1 or sum(lst[2*2:]) != 1:
+        continue
+    
+    ket = Ket(lst, None, str(element))
+    states.append(ket)
+
+def m_test_2(t=1, U=2):
+
+    for etats in combinations(states, 3):
+        
+        E0 = min(m_ground_energy(list(etats), 2, t, U)[0])
+        
+        if E0 < -1.23:
+
+            print([s.name for s in etats])
+            print(round(E0, 5))
+
+#m_test_2()
+
+
+
+## Test etat mixte 4 sites
+
+etats = np.arange(4**(2*4))
+
+states = []
+
+for element in etats:
+    
+    lst = list(map(int, format(element, f'0{16}b')))
+
+    if sum(lst[:2*4]) != 2 or sum(lst[2*4:]) != 2:
+        continue
+    
+    ket = Ket(lst, None, str(element))
+    states.append(ket)
+
+def m_test_4(t=1, U=2):
+
+    for etats in combinations(states, 6):
+        
+        E0 = min(m_ground_energy(list(etats), 4, t, U)[0])
+        
+        if E0 < -2.82:
+
+            print([s.name for s in etats])
+            print(round(E0, 5))
+
+m_test_4()
