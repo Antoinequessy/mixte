@@ -2,6 +2,7 @@ import os
 import math
 import numpy as np
 import scipy as sp
+from sympy import symbols, prod
 import matplotlib.pyplot as plt
 import time
 from itertools import combinations, product
@@ -11,13 +12,14 @@ np.set_printoptions(precision=5, linewidth=150, suppress=True)
 
 
 class Ket:
-    def __init__(self, vector, typ, name=None):
+    def __init__(self, vector, typ, name=None, compteur=0):
+        self.type = typ
         self.vector = np.array(vector)
         self.name = name
-        self.type = typ
+        self.compteur = compteur
 
     def number(self):
-        return int("".join(map(str, self.vector)), 2)
+        return int("".join(map(str, self.vector)), 2) + int(self.type == "k") * 4**(len(self.vector)//2)
 
     def __repr__(self):
         return self.name if self.name is not None else "Ket"
@@ -59,10 +61,49 @@ def all_components(H):
 
 
 
+def m_get_H_S(N, t=1, U=2):
+
+    H_file = f"m_H_{N}_{t}_{U}.npy"
+    S_file = f"m_S_{N}.npy"
+
+    if os.path.exists(H_file) and os.path.exists(S_file):
+
+        H = np.load(H_file)
+        S = np.load(S_file)
+        
+        return H, S
+
+    etats = np.arange(4**(2*N))
+
+    states = []
+
+    compteur = 0
+
+    for element in etats:
+
+        lst = list(map(int, format(element, f'0{4*N}b')))
+
+        if sum(lst[:2*N]) != N/2 or sum(lst[2*N:]) != N/2:
+            continue
+
+        ket = Ket(lst, None, str(element), compteur=compteur)
+        states.append(ket)
+
+        compteur += 1
+
+    _, H, S, _, _ = m_ground_energy(states, N, t, U)
+
+    np.save(H_file, H)
+    np.save(S_file, S)
+
+    return H, S
+
+
+
 def get_H_S(N, t=1, U=2):
 
     H_file = f"H_{N}_{t}_{U}.npy"
-    S_file = f"S_{N}_{t}_{U}.npy"
+    S_file = f"S_{N}.npy"
 
     if os.path.exists(H_file) and os.path.exists(S_file):
 
@@ -189,10 +230,9 @@ def met_m(state1, state2, N):
     err = False
 
     return norm * somme, k_states1, c1, k_states2, c2, norm, err
- 
 
 
-def m_ground_energy(states, N, t=1, U=2):
+def m_ground_energy(states, N, t=1, U=2, mu=0):
 
     dim = len(states)
 
@@ -215,7 +255,7 @@ def m_ground_energy(states, N, t=1, U=2):
             for l in range(len(k_states1)):
                 for m in range(len(k_states2)):
 
-                    H[i, j] += np.conj(c1[l]) * c2[m] * ham_k(k_states1[l], k_states2[m], N, t, U)
+                    H[i, j] += np.conj(c1[l]) * c2[m] * ham_k(k_states1[l], k_states2[m], N, t, U, mu)
 
             H[i, j] = norm * H[i, j]
     
@@ -224,6 +264,32 @@ def m_ground_energy(states, N, t=1, U=2):
 
     new_S = S + S.conj().T
     np.fill_diagonal(new_S, np.diag(S).real)
+
+    eig_S = np.linalg.eigh(new_S)[0]
+
+    if np.any(np.isclose(eig_S, 0, atol=1e-6)):
+        
+        eigenvalues, eigenvectors = gen_diagonalization(new_H, new_S)        
+        overfilled = True
+
+    else:
+
+        eigenvalues, eigenvectors = sp.linalg.eigh(new_H, new_S)
+        overfilled = False
+
+    return eigenvalues, new_H, new_S, eigenvectors.T, overfilled
+
+
+
+def m_optimized_ground_energy(states, H, S, N, t=1, U=2):
+
+    n = []
+    
+    for element in states:
+        n.append(int(element.compteur))
+
+    new_H = H[np.ix_(n, n)]
+    new_S = S[np.ix_(n, n)]
 
     eig_S = np.linalg.eigh(new_S)[0]
 
@@ -515,7 +581,7 @@ def complete_matrixes(N, t=1, U=2):
 
 
 
-def ham_k(state1, state2, N, t=1, U=2):
+def ham_k(state1, state2, N, t=1, U=2, mu=0):
 
     if np.array_equal(state1, state2):
 
@@ -531,7 +597,7 @@ def ham_k(state1, state2, N, t=1, U=2):
 
             somme += np.cos((2*np.pi*i) / N) * (state_up[i] + state_down[i])
         
-        H = -2*t * somme + U/N * n_up * n_down
+        H = -2*t * somme + U/N * n_up * n_down - mu * sum(state1)
 
         return H
 
@@ -618,7 +684,7 @@ def ham_k(state1, state2, N, t=1, U=2):
 
 
 
-def ham_r(state1, state2, N, t=1, U=2):
+def ham_r(state1, state2, N, t=1, U=2, mu=0):
 
     if np.array_equal(state1, state2):
 
@@ -633,7 +699,7 @@ def ham_r(state1, state2, N, t=1, U=2):
 
                 n_U += 1
 
-        H = U * n_U
+        H = U * n_U - mu * (sum(state1))
 
         return H
 
@@ -713,7 +779,7 @@ def ham_r(state1, state2, N, t=1, U=2):
 
 
 
-def ham_rk(order, state1, state2, N, t=1, U=2):
+def ham_rk(order, state1, state2, N, t=1, U=2, mu=0):
 
     state1_up = state1[:N]
     state1_down = state1[N:]
@@ -756,9 +822,11 @@ def ham_rk(order, state1, state2, N, t=1, U=2):
         if order == "kr":
 
             H_U += U * state2[i] * state2[i + N]
+
+    H_mu = - mu * sum(state1)
             
 
-    H = met_rk(order, state1, state2, N) * (H_t + H_U)
+    H = met_rk(order, state1, state2, N) * (H_t + H_U + H_mu)
     
     return H
 
@@ -832,7 +900,7 @@ def met_rk(order, state1, state2, N):
 
 
 
-def ground_energy(states, N, t=1, U=2):   
+def ground_energy(states, N, t=1, U=2, mu=0):   
     
     dim = len(states)
 
@@ -844,22 +912,22 @@ def ground_energy(states, N, t=1, U=2):
 
             if states[i].type == "r" and states[j].type == "r":
                 
-                H[i, j] = ham_r(states[i].vector, states[j].vector, N, t, U)
+                H[i, j] = ham_r(states[i].vector, states[j].vector, N, t, U, mu)
                 S[i, j] = met_r(states[i].vector, states[j].vector, N)
 
             elif states[i].type == "r" and states[j].type == "k":
                 
-                H[i, j] = ham_rk("rk", states[i].vector, states[j].vector, N, t, U)
+                H[i, j] = ham_rk("rk", states[i].vector, states[j].vector, N, t, U, mu)
                 S[i, j] = met_rk("rk", states[i].vector, states[j].vector, N)
 
             elif states[i].type == "k" and states[j].type == "r":
                 
-                H[i, j] = ham_rk("kr", states[i].vector, states[j].vector, N, t, U)
+                H[i, j] = ham_rk("kr", states[i].vector, states[j].vector, N, t, U, mu)
                 S[i, j] = met_rk("kr", states[i].vector, states[j].vector, N)
 
             elif states[i].type == "k" and states[j].type == "k":
                 
-                H[i, j] = ham_k(states[i].vector, states[j].vector, N, t, U)
+                H[i, j] = ham_k(states[i].vector, states[j].vector, N, t, U, mu)
                 S[i, j] = met_k(states[i].vector, states[j].vector, N)
     
     new_H = H + H.conj().T
@@ -893,14 +961,43 @@ def optimized_ground_energy(states, H, S, N, t=1, U=2):
         if element.type == "r":
             n.append(element.number())
         if element.type == "k":
-            n.append(element.number() + 4**N)
+            n.append(element.number())
 
     new_H = H[np.ix_(n, n)]
     new_S = S[np.ix_(n, n)]
 
     eig_S = np.linalg.eigh(new_S)[0]
 
-    if np.any(np.isclose(eig_S, 0, atol=1e-6)):
+    if np.any(np.isclose(eig_S, 0, atol=1e-4)):
+        
+        eigenvalues, eigenvectors = gen_diagonalization(new_H, new_S)        
+        overfilled = True
+
+    else:
+
+        eigenvalues, eigenvectors = sp.sparse.linalg.eigsh(new_H, 1, new_S, which="SA")
+        overfilled = False
+
+    return eigenvalues, new_H, new_S, eigenvectors.T, overfilled
+
+
+
+def small_optimized_ground_energy(states, H, S, N, t=1, U=2):
+
+    n = []
+    
+    for element in states:
+        if element.type == "r":
+            n.append(element.number())
+        if element.type == "k":
+            n.append(element.number())
+
+    new_H = H[np.ix_(n, n)]
+    new_S = S[np.ix_(n, n)]
+
+    eig_S = np.linalg.eigh(new_S)[0]
+
+    if np.any(np.isclose(eig_S, 0, atol=1e-4)):
         
         eigenvalues, eigenvectors = gen_diagonalization(new_H, new_S)        
         overfilled = True
@@ -911,6 +1008,40 @@ def optimized_ground_energy(states, H, S, N, t=1, U=2):
         overfilled = False
 
     return eigenvalues, new_H, new_S, eigenvectors.T, overfilled
+
+
+
+def complete_basis(S, states, N):
+    """
+    Prend en entree une matrice complete S et
+    l'ensemble des etats d'un bloc a demi-rempli
+    en r et en k.
+    Retourne une base mixte aleatoire qui n'est pas
+    surcomplete.
+    """
+
+    n = []
+    
+    for element in states:
+        if element.type == "r":
+            n.append(element.number())
+        if element.type == "k":
+            n.append(element.number())
+
+    n = np.array(n)
+
+    eigvals = [0]
+    
+    while np.isclose(eigvals[0], 0, atol=1e-6):
+
+        comb = np.sort(np.random.choice(len(states), size=len(states)//2, replace=False))
+
+        new_S = S[np.ix_(n[comb], n[comb])]
+        eigvals, _ = np.linalg.eigh(new_S)
+
+    return [states[i] for i in comb]
+
+
 
 
 
@@ -937,7 +1068,7 @@ def test_2(t=1, U=2):
 
     for etats in combinations(states, 3):
         
-        E0 = min(ground_energy(list(etats), 2, t, U)[0])
+        E0 = ground_energy(list(etats), 2, t, U)[0]
 
         if E0 < -3.12:
 
@@ -954,6 +1085,21 @@ def test_2(t=1, U=2):
 
 
 #H_r = hamiltonian_r(4)
+#
+#r_states = np.arange(256)
+#etats_r = []
+#
+#for r in r_states:
+#    
+#    ket_r = Ket(list(map(int, format(r, f'0{8}b'))), "r", str(r) + "r")
+#    etats_r.append(ket_r)
+#
+#H_r = np.zeros((256, 256), dtype=complex)
+#
+#for i in range(256):
+#    for j in range(256):
+#
+#        H_r[i, j] = ham_r(etats_r[i].vector, etats_r[j].vector, 4, 1, 2, 1)
 #
 #comps_r = all_components(H_r)
 #
@@ -974,12 +1120,28 @@ def test_2(t=1, U=2):
 #    for el in eigvals:
 #        fund_r.append(el)
 #
-#    print(min(eigvals))
+#    print(sorted(eigvals))
 #
 #print(sorted(fund_r))
 #
 #    
 #H_k = hamiltonian_k(4)
+#
+#k_states = np.arange(256)
+#etats_k = []
+#
+#for k in k_states:
+#    
+#    ket_k = Ket(list(map(int, format(k, f'0{8}b'))), "k", str(k) + "k")
+#    etats_k.append(ket_k)
+#
+#H_k = np.zeros((256, 256), dtype=complex)
+#
+#for i in range(256):
+#    for j in range(256):
+#
+#        H_k[i, j] = ham_k(etats_k[i].vector, etats_k[j].vector, 4, 1, 4, 2)
+#
 #
 #comps_k = all_components(H_k)
 #
@@ -1000,10 +1162,10 @@ def test_2(t=1, U=2):
 #    for el in eigvals:
 #        fund_k.append(el)
 #
-#    print(min(eigvals))
+#    print(sorted((eigvals)))
 #
 #print(sorted(fund_k))
-
+#
 
 
 
@@ -1076,6 +1238,13 @@ for element in etats4:
     states_k4.append(ket_k)
     states_k.append(ket_k)
 
+for element in etats:
+    ket_r = Ket(list(map(int, format(element, f'0{8}b'))), "r", str(element) + "r")
+    ket_k = Ket(list(map(int, format(element, f'0{8}b'))), "k", str(element) + "k")
+
+    states.append(ket_r)
+    states.append(ket_k)
+
 
 def best_k(states_k, t=1, U=2):
 
@@ -1087,7 +1256,7 @@ def best_k(states_k, t=1, U=2):
 
         for etats_k in combinations(states_k, i):
 
-            E0 = min(ground_energy(list(etats_k), 4, t, U)[0])
+            E0 = ground_energy(list(etats_k), 4, t, U)[0]
             
             E_i.append(E0)
 
@@ -1095,6 +1264,228 @@ def best_k(states_k, t=1, U=2):
 
     return E
 
+
+
+H, S = get_H_S(4)
+
+ensembles = []
+tailles = []
+
+#def optimized_fund_4(states, t=1, U=2):
+#
+#    E0 = -2.8284
+#
+# A utiliser pour accelerer (mais moins de precision)
+#    
+#    if len(states) == 72:
+#        
+#        E, _, _, vec, _ = optimized_ground_energy(states, H, S, 4, t, U)
+#
+#        n = []
+#
+#        for i, element in zip(range(72), vec):
+#            if np.isclose(element.real, 0) and np.isclose(element.imag, 0):
+#
+#                n.append(i)
+#    
+#        for i in n[::-1]:
+#            states.pop(i)
+#
+#        return optimized_fund_4(states, t, U)
+#
+#    if len(states) > 30:        
+#        for i in range(len(states)):
+#
+#            new_states = states.copy()
+#
+#            index = np.random.randint(len(states))
+#            new_states.pop(index)
+#    
+#            E = optimized_ground_energy(new_states, H, S, 4, t, U)[0]
+#
+#            if E[0] <= E0:
+#                return optimized_fund_4(new_states, t, U)
+#
+#    elif len(states) <= 30:
+#        for i in range(len(states)):
+#
+#            new_states = states.copy()
+#
+#            new_states.pop(i)
+#
+#            E = small_optimized_ground_energy(new_states, H, S, 4, t, U)[0]
+#
+#            if E[0] <= E0:                         
+#                return optimized_fund_4(new_states, t, U)
+#    
+#    if len(states) <= 10 and states not in ensembles:
+#
+#        ensembles.append(states)
+#        tailles.append(len(states))
+#
+#    return states
+#
+
+def optimized_fund_4(states, t=1, U=2):
+    
+    E0 = -2.8284
+
+    while True:
+
+        if len(states) > 30:
+            solver = optimized_ground_energy
+            use_random_index = True
+
+        else:
+            solver = small_optimized_ground_energy
+            use_random_index = False
+
+        removed = False
+
+        for i in range(len(states)):
+
+            new_states = states.copy()
+            idx = np.random.randint(len(states)) if use_random_index else i
+            new_states.pop(idx)
+            E = solver(new_states, H, S, 4, t, U)[0]
+
+            if E[0] <= E0:
+
+                states = new_states
+                removed = True
+                break
+
+        if not removed:
+            break
+
+    if len(states) <= 10 and states not in ensembles:
+        ensembles.append(states)
+        tailles.append(len(states))
+
+    return states
+
+
+#for i in range(150):
+#
+#    debut = time.perf_counter()
+#    optimized_fund_4(states)
+#    fin = time.perf_counter()
+#
+#    print(f"{fin-debut:.5f} s")
+#
+#
+#
+#print("Energie fondamentale\n")
+#print(-2.82843)
+#for i in range(len(ensembles)):
+#    print(f"\n{ensembles[i]} \n {tailles[i]}")
+
+
+
+def minor_polynom(E0, eigvals, eigvec):
+
+    val = 0
+
+    for k in range(len(eigvals)):
+        
+        term = abs(eigvec[k])**2 * prod((E0 - eigvals[j]) for j in range(len(eigvals)) if j != k)
+        val += term
+
+    return val
+
+
+#ensembles = []
+#tailles = []
+#visited = set()
+#
+#def plus_optimized_fund_4(states, eps=1e-10, t=1, U=2):
+#
+#    key = tuple(sorted(s.number() for s in states))
+#
+#    if key in visited:
+#        return
+#
+#    visited.add(key)
+#
+#    E0 = -2.828427124746192
+#
+#    eigvals, _, _, eigvecs, _ = small_optimized_ground_energy(states, H, S, 4, t, U)
+#    
+#    print(eigvals[0])
+#
+#    index_to_flush = []
+#
+#    for i in range(len(eigvals)):
+#        left = minor_polynom(E0 - eps, eigvals, eigvecs[i, :])
+#        right = minor_polynom(E0 + eps, eigvals, eigvecs[i, :])
+#
+#        if left * right < 0:
+#            index_to_flush.append(i)
+#
+#    print(len(index_to_flush))
+#
+#    for index in index_to_flush:
+#        new_states = states.copy()
+#        new_states.pop(index)
+#        plus_optimized_fund_4(new_states)
+#
+#    if len(states) <= 10 and states not in ensembles:
+#        ensembles.append(states.copy())
+#        tailles.append(len(states))
+#        print("youppi!")
+#        print(states)
+
+
+
+
+#ensembles = []
+#tailles = []
+#
+#def plus_optimized_fund_4(states, eps=1e-10, t=1, U=2):
+#
+#    E0 = -2.828427124746192
+#
+#    eigvals, _, _, eigvecs, _ = small_optimized_ground_energy(states, H, S, 4, t, U)
+#
+#    index_to_flush = []
+#
+#    for i in range(len(eigvals)):
+#
+#        left = minor_polynom(E0 - eps, eigvals, eigvecs[i,:])
+#        right = minor_polynom(E0 + eps, eigvals, eigvecs[i,:])
+#    
+#        if left*right < 0:
+#            index_to_flush.append(i)
+#
+#    for index in index_to_flush:
+#        
+#        new_states = states.copy()
+#        new_states.pop(index)
+#
+#        plus_optimized_fund_4(new_states)
+#    
+#    if len(states) <= 10 and states not in ensembles:
+#
+#        ensembles.append(states)
+#        tailles.append(len(states))
+#
+#        print("youppi!")
+#        print(states)
+#
+#    return states
+#
+#
+#
+#for i in range(10):
+#
+#    plus_optimized_fund_4(complete_basis(S, states, 4))
+#
+#
+#print("Energie fondamentale\n")
+#print(-2.82843)
+#for i in range(len(ensembles)):
+#    print(f"\n{ensembles[i]} \n {tailles[i]}")
+#
 
 
 def test_4(t=1, U=2):
@@ -1127,11 +1518,9 @@ def test_4(t=1, U=2):
                         for e in etats_k:
                             new_states.append(e)
 
-                        energies, _, _, _, overfilled = optimized_ground_energy(new_states, H, S, 4, t, U)
+                        E0, _, _, _, overfilled = optimized_ground_energy(new_states, H, S, 4, t, U)
 
                         if set(new_states) == set(ensemble_minimal):
-                            
-                            E0 = min(energies)
 
                             print("Energie fondamentale\n")
                             print([s.name for s in new_states])
@@ -1155,8 +1544,6 @@ def test_4(t=1, U=2):
                             print("\n")
 
                         else:
-
-                            E0 = min(energies)
                             
                             for ind, E in zip(range(9, 3, -1), reversed(best)):
 
@@ -1176,12 +1563,12 @@ def test_4(t=1, U=2):
 ## Test 4-sites : energie fondamentale et etat fondamental
 
 
-r = [90, 165, 85, 170]
-k = [102, 105, 150, 153]
+r = [90, 165]
+k = [90, 153, 165, 204]
 
 
 
-def mixte4(r, k, t=1, U=2):
+def mixte4(r, k, t=1, U=2, mu=0):
     
     debut = time.perf_counter()
 
@@ -1197,11 +1584,7 @@ def mixte4(r, k, t=1, U=2):
         ket_k = Ket(list(map(int, format(k, f'0{8}b'))), "k", str(k) + "k")
         states.append(ket_k)
 
-    E, H, S, v, overfilled = ground_energy(states, 4, t, U)
-
-    E0 = min(E)
-
-    omega = v[np.argmin(E)]
+    E, H, S, omega, overfilled = ground_energy(states, 4, t, U, mu)
 
     fin = time.perf_counter()
 
@@ -1211,18 +1594,18 @@ def mixte4(r, k, t=1, U=2):
         print("\n")
         print("BASE SURCOMPLETE")
     print("\n")
-    print("Energie fondamentale : ", round(E0, 5))
+    print("Energie fondamentale : ", round(min(E), 5))
     print("\n")
     print("H = \n", H)
     print("\n")
     print("S = \n", S)
     print("\n")
-    print("Etat fondamental : ", omega)
+    print("Etat fondamental : ", omega[0])
 
     print("\n")
     print(f"Temps d'exécution total : {fin - debut:.6f} s")
 
-    return E0, H, S, omega
+    return E[0], H, S, omega[0]
 
 
 
@@ -1234,38 +1617,40 @@ def mixte4(r, k, t=1, U=2):
 ## Test 6-sites : base mixte
 
 
-#H_r = hamiltonian_r(6)
-#
-#comps_r = all_components(H_r)
-#
-#fund_r = []
-#
-#for c in comps_r:
-#
-#    if len(c) == (math.factorial(6) ** 2) / (math.factorial(3) ** 4):
-#
-#        #print(c)
-#
-#        r_set = c.copy()
-#
-#        S_sorted = sorted(c)
-#        H_sub = H_r[np.ix_(S_sorted, S_sorted)]
-#
-#        eigvals = []
-#
-#        for val in np.linalg.eigvals(H_sub): 
-#            eigvals.append(float(round(val.real, 5)))
-#
-#        for el in eigvals:
-#            fund_r.append(el)
-#
-#
-#        #print(sorted(eigvals))
-#
-#        break
-#
-#
-#    
+H_r = hamiltonian_r(6)
+
+comps_r = all_components(H_r)
+
+fund_r = []
+
+for c in comps_r:
+
+    if len(c) == (math.factorial(6) ** 2) / (math.factorial(3) ** 4):
+
+        #print(c)
+
+        r_set = c.copy()
+
+        S_sorted = sorted(c)
+        H_sub = H_r[np.ix_(S_sorted, S_sorted)]
+
+        eigvals = []
+
+        for val in np.linalg.eigvals(H_sub): 
+            eigvals.append(float(round(val.real, 5)))
+
+        for el in eigvals:
+            fund_r.append(el)
+
+        states_k = list(c)
+
+
+        #print(sorted(eigvals))
+
+        break
+
+
+    
 #H_k = hamiltonian_k(6)
 #
 #comps_k = all_components(H_k)
@@ -1294,9 +1679,10 @@ def mixte4(r, k, t=1, U=2):
 #        if min(eigvals) < -5.4:
 #            states_k1 = list(c)
 #
+
 #print(sorted(fund_k))
-#
-#
+
+
 #states = []
 #states_k = []
 #
@@ -1325,15 +1711,166 @@ def mixte4(r, k, t=1, U=2):
 #    for el in etats_k:
 #        new_states.append(el)
 #
-#    E0 = min(optimized_ground_energy(new_states, H, S, 6, 1, 2)[0])
+#    E0 = optimized_ground_energy(new_states, H, S, 6, 1, 2)[0]
 #
-#    if E0 < -5.1695:
+#    if E0 < -5.12:
 #        
 #        print("Energie fondamentale\n")
 #        print([s.name for s in new_states])
 #        print(round(E0, 5))
 #        print("\n")
+
+
+
+#states = []
 #
+#for element in states_k:
+#    ket_r = Ket(list(map(int, format(element, f'0{8}b'))), "r", str(element) + "r")
+#    ket_k = Ket(list(map(int, format(element, f'0{8}b'))), "k", str(element) + "k")
+#
+#    states.append(ket_r)
+#    states.append(ket_k)
+#
+
+H, S = get_H_S(6)
+
+ensembles = []
+tailles = []
+
+
+#def optimized_fund_6(states, t=1, U=2):
+#
+#    E0 = -5.4094
+#
+#    if len(states) > 90:
+#        
+#        for i in range(len(states)):
+#
+#            new_states = states.copy()
+#
+#            index = np.random.randint(len(states))
+#            new_states.pop(index)
+#    
+#            E = optimized_ground_energy(new_states, H, S, 6, t, U)[0]
+#
+#            if E <= E0:
+#                return optimized_fund_6(new_states, t, U)
+#
+#    elif len(states) <= 90:
+#
+#        for i in range(len(states)):
+#
+#            new_states = states.copy()
+#
+#            new_states.pop(i)
+#
+#            E = optimized_ground_energy(new_states, H, S, 6, t, U)[0]
+#
+#            if E <= E0:
+#                return optimized_fund_6(new_states, t, U)
+#
+#    if len(states) <= 70 and states not in ensembles:
+#
+#        ensembles.append(states)
+#        tailles.append(len(states))
+#
+#    return states
+
+
+def optimized_fund_6(states, t=1, U=2):
+
+    E0 = -5.4094
+
+    while True:
+
+        if len(states) > 90:
+            solver = optimized_ground_energy
+            use_random_index = True
+
+        else:
+            solver = small_optimized_ground_energy
+            use_random_index = False
+
+        removed = False
+
+        for i in range(len(states)):
+
+            new_states = states.copy()
+            idx = np.random.randint(len(states)) if use_random_index else i
+            new_states.pop(idx)
+            E = solver(new_states, H, S, 6, t, U)[0]
+
+            if E[0] <= E0:
+
+                states = new_states
+                removed = True
+                break
+
+        if not removed:
+            break
+
+    if len(states) <= 70 and states not in ensembles:
+        ensembles.append(states)
+        tailles.append(len(states))
+
+    return states
+
+
+
+#for i in range(10):
+#    
+#    debut = time.perf_counter()
+#    optimized_fund_6(states)
+#    fin = time.perf_counter()
+#
+#    print(f"{fin-debut:5f} s")
+#
+#
+#print("Energie fondamentale\n")
+#print(-5.40943)
+#for i in range(len(ensembles)):
+#    print(f"\n{ensembles[i]} \n {tailles[i]}")
+
+
+
+def plus_optimized_fund_6(states, t=1, U=2):
+
+    E0 = -5.4094
+
+    if len(states) > 90:
+        
+        for i in range(len(states)):
+
+            new_states = states.copy()
+
+            index = np.random.randint(len(states))
+            new_states.pop(index)
+    
+            E = optimized_ground_energy(new_states, H, S, 6, t, U)[0]
+
+            if E <= E0:
+                return optimized_fund_6(new_states, t, U)
+
+    elif len(states) <= 90:
+
+        for i in range(len(states)):
+
+            new_states = states.copy()
+
+            new_states.pop(i)
+
+            E = optimized_ground_energy(new_states, H, S, 6, t, U)[0]
+
+            if E <= E0:
+                return optimized_fund_6(new_states, t, U)
+
+    if len(states) <= 70 and states not in ensembles:
+
+        ensembles.append(states)
+        tailles.append(len(states))
+
+    return states
+
 
 
 
@@ -1360,11 +1897,7 @@ def mixte6(r, k, t=1, U=2):
         ket_k = Ket(list(map(int, format(k, f'0{12}b'))), "k", str(k) + "k")
         states.append(ket_k)
 
-    E, H, S, v, overfilled = ground_energy(states, 6, t, U)
-
-    E0 = min(E)
-
-    omega = v[np.argmin(E)]
+    E, H, S, omega, overfilled = ground_energy(states, 6, t, U)
 
     fin = time.perf_counter()
 
@@ -1373,18 +1906,18 @@ def mixte6(r, k, t=1, U=2):
         print("\n")
         print("BASE SURCOMPLETE")
     print("\n")
-    print("Energie fondamentale : ", round(E0, 5))
+    print("Energie fondamentale : ", round(E[0], 5))
     print("\n")
     print("H = \n", H)
     print("\n")
     print("S = \n", S)
     print("\n")
-    print("Etat fondamental : ", omega)
+    print("Etat fondamental : ", omega[0])
 
     print("\n")
     print(f"Temps d'exécution total : {fin - debut:.6f} s")
 
-    return E0, H, S, omega
+    return E[0], H, S, omega[0]
 
 #mixte6(r, k)
 
@@ -1396,6 +1929,8 @@ etats = np.arange(4**(2*2))
 
 states = []
 
+compteur = 0
+
 for element in etats:
     
     lst = list(map(int, format(element, f'0{8}b')))
@@ -1403,19 +1938,25 @@ for element in etats:
     if sum(lst[:2*2]) != 1 or sum(lst[2*2:]) != 1:
         continue
     
-    ket = Ket(lst, None, str(element))
+    ket = Ket(lst, None, str(element), compteur=compteur)
     states.append(ket)
+
+    compteur += 1
+
 
 def m_test_2(t=1, U=2):
 
-    for etats in combinations(states, 3):
+    for etats in combinations(states, 2):
+
+        H, S = m_get_H_S(2, t, U)
         
-        E0 = min(m_ground_energy(list(etats), 2, t, U)[0])
+        E0 = m_optimized_ground_energy(list(etats), H, S, 2, t, U)[0][0]
         
         if E0 < -1.23:
 
             print([s.name for s in etats])
             print(round(E0, 5))
+
 
 #m_test_2()
 
@@ -1437,15 +1978,1797 @@ for element in etats:
     ket = Ket(lst, None, str(element))
     states.append(ket)
 
+
 def m_test_4(t=1, U=2):
 
-    for etats in combinations(states, 6):
+    debut = time.perf_counter()
+
+    H, S = m_get_H_S(4, t, U)
+
+    fin = time.perf_counter()
+
+    print(f"H/S computed in {fin-debut:.5f} s")
+
+    for etats in combinations(states, 3):
+
+        debut = time.perf_counter()
         
-        E0 = min(m_ground_energy(list(etats), 4, t, U)[0])
+        E0 = m_optimized_ground_energy(list(etats), H, S, 4, t, U)[0]
         
         if E0 < -2.82:
 
             print([s.name for s in etats])
             print(round(E0, 5))
 
-m_test_4()
+        fin = time.perf_counter()
+
+        print(f"{fin-debut:.5f} s")
+
+#m_test_4()
+
+
+
+## Fonction de Green non orthonormee (construction de N sous-espaces excites mu)
+
+
+
+# Etats de la base de depart
+
+#r = [51, 53, 54, 57, 58, 60, 83, 85, 86, 89, 90, 92, 99, 101, 102, 105, 106, 108, 147, 149, 150, 153, 154, 156, 163, 165, 166, 169, 170, 172, 195, 197, 198, 201, 202, 204]
+#k = []
+
+#r = [51, 53, 54, 57, 58, 60, 83, 85, 86, 89, 90, 92, 99, 101, 102, 105, 106, 108, 147, 149, 150, 153, 154, 156, 163, 165, 166, 169, 170, 172, 195, 197, 198, 201, 202, 204]
+#k = [51, 53, 54, 57, 58, 60, 83, 85, 86, 89, 90, 92, 99, 101, 102, 105, 106, 108, 147, 149, 150, 153, 154, 156, 163, 165, 166, 169, 170, 172, 195, 197, 198, 201, 202, 204]
+
+#r = [90, 165]
+#k = [90, 165, 153, 204]
+
+#r = []
+#k = [51, 60, 90, 102, 105, 150, 153, 165, 195, 204]
+
+#r = [51, 102, 153, 204]
+#k = [51, 102, 153, 204]
+
+
+#r = [51, 54, 57, 58, 83, 85, 86, 89, 90, 92, 99, 101, 105, 106, 108, 147, 149, 154, 156, 163, 165, 166, 169, 172, 195, 197, 201]
+#k = [53, 60, 102, 150, 153, 170, 198, 202, 204]
+
+
+#r = [85, 170]
+#k = [51, 60, 90, 153, 165, 195, 204]
+
+
+#r = [51, 60, 90, 165, 195, 204]
+#k = [85, 153, 170, 204]
+
+
+#r = [85, 170]
+#k = [90, 102, 105, 150, 153, 165, 204]
+
+
+#r = [51, 60, 153, 204]
+#k = []
+
+
+# Parametres du systeme
+
+N = 4
+t = 1
+U = 2
+mu = U/2
+
+# Parametres de l'excitation
+
+spin = 0        # Spin up --> 0  /  Spin down --> 1
+basis = "k"
+
+
+
+def etats_decomposes(N):
+    
+    ensemble = []
+
+    for positions in combinations(range(N), N//2):
+
+        liste = [0] * N
+        
+        for i in positions:
+            liste[i] = 1
+
+        ensemble.append(liste)
+
+    resultat = []
+
+    for a in ensemble:
+        for b in ensemble:
+            resultat.append(a + b)
+
+    return resultat
+
+
+
+def Ht_mu(state1, state2, N, mu, t, excitation):
+
+    diff = [b - a for a, b in zip(state1, state2)]
+
+    if diff.count(1) != 1 or diff.count(-1) != 1:
+        return 0
+
+    i = diff.index(1)
+    j = diff.index(-1)
+    
+    if excitation == "e":
+        if j != mu:
+            return 0
+    
+    elif excitation == "h":
+        if i != mu:
+            return 0
+
+    if abs(i - j) == 1:
+        exp = 0
+
+    elif abs(i - j) == N - 1:
+        exp = N // 2 - 1
+
+    else:
+        return 0
+
+    return t * (-1) ** exp
+
+
+
+def S_plus_r(states, N, mu, spin):
+
+    dim = len(states)
+
+    S = np.load(f"S_{N}.npy")
+
+    S_plus = np.zeros((dim, dim), dtype=complex)
+
+    for i in range(dim):
+        for j in range(dim):
+
+            if states[i].type == "r" and states[j].type == "r":
+
+                S_plus[i, j] = int(i == j) * int(states[i].vector[mu + N*spin] == 0)
+
+            elif states[i].type == "r" and states[j].type == "k":
+
+                S_plus[i, j] = int(states[i].vector[mu + N*spin] == 0) * S[states[i].number(), states[j].number()]
+
+            elif states[i].type == "k" and states[j].type == "r":
+
+                S_plus[i, j] = int(states[j].vector[mu + N*spin] == 0) * S[states[i].number(), states[j].number()]
+
+            elif states[i].type == "k" and states[j].type == "k":
+
+                S_plus[i, j] = 0
+
+                etats = etats_decomposes(N)
+
+                for l in range(len(etats)):
+
+                    s1 = S[states[i].number(), int(''.join(map(str, etats[l])), 2)]
+                    s2 = S[int(''.join(map(str, etats[l])), 2), states[j].number()]
+
+                    S_plus[i, j] += int(etats[l][mu + N*spin] == 0) * s1 * s2
+
+    return S_plus
+
+
+
+
+def H_plus_r(states, N, mu, spin, t, U, mu1):
+
+    dim = len(states)
+
+    S = np.load(f"S_{N}.npy")
+
+    H_plus = np.zeros((dim, dim), dtype=complex)
+
+    for i in range(dim):
+        for j in range(dim):
+
+            if states[i].type == "r" and states[j].type == "r":
+
+                delta = int(i == j)
+
+                term1 = Ht_mu(states[i].vector, states[j].vector, N, mu + N*spin, t, "e")
+                term2 = U * int(states[j].vector[mu + N*int(spin == 0)] == 1) * delta
+                term3 = -mu1 * delta
+                term4 = ham_r(states[i].vector, states[j].vector, N, t, U, mu1)
+
+                H_plus[i, j] = term1 + int(states[j].vector[mu + N*spin] == 0) * (term2 + term3 + term4)
+                     
+
+            elif states[i].type == "r" and states[j].type == "k":
+
+                H_plus[i, j] = 0
+
+                etats = etats_decomposes(N)
+
+                for l in range(len(etats)):
+                    
+                    delta = int(np.array_equal(states[i].vector, etats[l]))
+
+                    term1 = Ht_mu(states[i].vector, etats[l], N, mu + N*spin, t, "e")
+                    term2 = U * int(etats[l][mu + N*int(spin == 0)] == 1) * delta
+                    term3 = -mu1 * delta
+                    term4 = ham_r(states[i].vector, etats[l], N, t, U, mu1)
+
+                    s = S[int(''.join(map(str, etats[l])), 2), states[j].number()]
+
+                    H_plus[i, j] += s * (term1 + int(etats[l][mu + N*spin] == 0) * (term2 + term3 + term4))
+
+            elif states[i].type == "k" and states[j].type == "r":
+
+                H_plus[i, j] = 0
+
+                etats = etats_decomposes(N)
+
+                for l in range(len(etats)):
+
+                    delta = int(np.array_equal(etats[l], states[j].vector))
+
+                    term1 = Ht_mu(etats[l], states[j].vector, N, mu + N*spin, t, "e")
+                    term2 = U * int(states[j].vector[mu + N*int(spin == 0)] == 1) * delta
+                    term3 = -mu1 * delta
+                    term4 = ham_r(etats[l], states[j].vector, N, t, U, mu1)
+
+                    s = S[states[i].number(), int(''.join(map(str, etats[l])), 2)]
+
+                    H_plus[i, j] += s * (term1 + int(states[j].vector[mu + N*spin] == 0) * (term2 + term3 + term4))
+
+            elif states[i].type == "k" and states[j].type == "k":
+
+                H_plus[i, j] = 0
+
+                etats = etats_decomposes(N)
+
+                for l in range(len(etats)):
+                    for m in range(len(etats)):
+
+                        delta = int(np.array_equal(etats[l], etats[m]))
+
+                        term1 = Ht_mu(etats[l], etats[m], N, mu + N*spin, t, "e")
+                        term2 = U * int(etats[m][mu + N*int(spin == 0)] == 1) * delta
+                        term3 = -mu1 * delta
+                        term4 = ham_r(etats[l], etats[m], N, t, U, mu1)
+
+                        s1 = S[states[i].number(), int(''.join(map(str, etats[l])), 2)]
+                        s2 = S[int(''.join(map(str, etats[m])), 2), states[j].number()]
+
+                        H_plus[i, j] += s1 * s2 * (term1 + int(etats[m][mu + N*spin] == 0) * (term2 + term3 + term4)) 
+
+
+    return H_plus
+
+
+
+
+def S_moins_r(states, N, mu, spin):
+
+    dim = len(states)
+
+    S = np.load(f"S_{N}.npy")
+
+    S_moins = np.zeros((dim, dim), dtype=complex)
+
+    for i in range(dim):
+        for j in range(dim):
+
+            if states[i].type == "r" and states[j].type == "r":
+
+                S_moins[i, j] = int(i == j) * int(states[i].vector[mu + N*spin] == 1)
+
+            elif states[i].type == "r" and states[j].type == "k":
+
+                S_moins[i, j] = int(states[i].vector[mu + N*spin] == 1) * S[states[i].number(), states[j].number()]
+
+            elif states[i].type == "k" and states[j].type == "r":
+
+                S_moins[i, j] = int(states[j].vector[mu + N*spin] == 1) * S[states[i].number(), states[j].number()]
+
+            elif states[i].type == "k" and states[j].type == "k":
+
+                S_moins[i, j] = 0
+
+                etats = etats_decomposes(N)
+
+                for l in range(len(etats)):
+
+                    s1 = S[states[i].number(), int(''.join(map(str, etats[l])), 2)]
+                    s2 = S[int(''.join(map(str, etats[l])), 2), states[j].number()]
+                    
+                    S_moins[i, j] += int(etats[l][mu + N*spin] == 1) * s1 * s2
+
+    return S_moins
+
+
+
+
+def H_moins_r(states, N, mu, spin, t, U, mu1):
+
+    dim = len(states)
+
+    S = np.load(f"S_{N}.npy")
+
+    H_moins = np.zeros((dim, dim), dtype=complex)
+
+    for i in range(dim):
+        for j in range(dim):
+
+            if states[i].type == "r" and states[j].type == "r":
+
+                delta = int(i == j)
+
+                term1 = Ht_mu(states[i].vector, states[j].vector, N, mu + N*spin, t, "h")
+                term2 = -U * int(states[j].vector[mu + N*int(spin == 0)] == 1) * delta
+                term3 = mu1 * delta
+                term4 = ham_r(states[i].vector, states[j].vector, N, t, U, mu1)
+
+                H_moins[i, j] = term1 + int(states[j].vector[mu + N*spin] == 1) * (term2 + term3 + term4)
+                     
+
+            elif states[i].type == "r" and states[j].type == "k":
+
+                H_moins[i, j] = 0
+
+                etats = etats_decomposes(N)
+
+                for l in range(len(etats)):
+                    
+                    delta = int(np.array_equal(states[i].vector, etats[l]))
+
+                    term1 = Ht_mu(states[i].vector, etats[l], N, mu + N*spin, t, "h")
+                    term2 = -U * int(etats[l][mu + N*int(spin == 0)] == 1) * delta
+                    term3 = mu1 * delta
+                    term4 = ham_r(states[i].vector, etats[l], N, t, U, mu1)
+
+                    s = S[int(''.join(map(str, etats[l])), 2), states[j].number()]
+
+                    H_moins[i, j] += s * (term1 + int(etats[l][mu + N*spin] == 1) * (term2 + term3 + term4))
+
+            elif states[i].type == "k" and states[j].type == "r":
+
+                H_moins[i, j] = 0
+
+                etats = etats_decomposes(N)
+
+                for l in range(len(etats)):
+
+                    delta = int(np.array_equal(etats[l], states[j].vector))
+
+                    term1 = Ht_mu(etats[l], states[j].vector, N, mu + N*spin, t, "h")
+                    term2 = -U * int(states[j].vector[mu + N*int(spin == 0)] == 1) * delta
+                    term3 = mu1 * delta
+                    term4 = ham_r(etats[l], states[j].vector, N, t, U, mu1)
+
+                    s = S[states[i].number(), int(''.join(map(str, etats[l])), 2)]
+
+                    H_moins[i, j] += s * (term1 + int(states[j].vector[mu + N*spin] == 1) * (term2 + term3 + term4))
+
+            elif states[i].type == "k" and states[j].type == "k":
+
+                H_moins[i, j] = 0
+
+                etats = etats_decomposes(N)
+
+                for l in range(len(etats)):
+                    for m in range(len(etats)):
+
+                        delta = int(np.array_equal(etats[l], etats[m]))
+
+                        term1 = Ht_mu(etats[l], etats[m], N, mu + N*spin, t, "h")
+                        term2 = -U * int(etats[m][mu + N*int(spin == 0)] == 1) * delta
+                        term3 = mu1 * delta
+                        term4 = ham_r(etats[l], etats[m], N, t, U, mu1)
+
+                        s1 = S[states[i].number(), int(''.join(map(str, etats[l])), 2)]
+                        s2 = S[int(''.join(map(str, etats[m])), 2), states[j].number()]
+
+                        H_moins[i, j] += s1 * s2 * (term1 + int(etats[m][mu + N*spin] == 1) * (term2 + term3 + term4)) 
+
+
+    return H_moins
+
+
+
+def HU_mu(state1, state2, N, mu, spin, U, excitation):
+    
+    diff = [b - a for a, b in zip(state1, state2)]
+
+    if diff[:N].count(1) != 1 or diff[:N].count(-1) != 1 or diff[N:].count(1) != 1 or diff[N:].count(-1) != 1:
+        return 0
+
+    i = diff[:N].index(1)
+    j = diff[:N].index(-1)
+    k = diff[N:].index(1) + N
+    l = diff[N:].index(-1) + N
+
+    state_up = state2[:N]
+    state_down = state2[N:]
+
+
+    if excitation == "e":
+
+        if spin == 0 and j != mu:
+            return 0
+
+        elif spin == 1 and l != mu + N:
+            return 0
+
+
+    elif excitation == "h":
+
+        if spin == 0 and i != mu:
+            return 0
+
+        elif spin == 1 and k != mu + N:
+            return 0
+
+
+    if (k-l) % N != (j-i) % N:
+        return 0
+    
+    exp = 0
+
+    if i < j:
+        exp += sum(state_up[:j]) + sum(state_up[:i]) - 1
+
+    elif i > j:
+        exp += sum(state_up[:j]) + sum(state_up[:i])
+
+    if k < l:
+        exp += sum(state_down[:l-N]) + sum(state_down[:k-N]) - 1
+
+    elif k > l:
+        exp += sum(state_down[:l-N]) + sum(state_down[:k-N])
+
+    return -U/N * (-1) ** exp
+
+
+
+
+def S_plus_k(states, N, mu, spin):
+
+    dim = len(states)
+
+    S = np.load(f"S_{N}.npy")
+
+    S_plus = np.zeros((dim, dim), dtype=complex)
+
+    for i in range(dim):
+        for j in range(dim):
+
+            if states[i].type == "r" and states[j].type == "r":
+
+                S_plus[i, j] = 0
+
+                etats = etats_decomposes(N)
+
+                for l in range(len(etats)):
+
+                    s1 = S[states[i].number(), int(''.join(map(str, etats[l])), 2) + 4**N]
+                    s2 = S[int(''.join(map(str, etats[l])), 2) + 4**N, states[j].number()]
+
+                    S_plus[i, j] += int(etats[l][mu + N*spin] == 0) * s1 * s2
+
+            elif states[i].type == "r" and states[j].type == "k":
+
+                S_plus[i, j] = int(states[j].vector[mu + N*spin] == 0) * S[states[i].number(), states[j].number()]
+
+            elif states[i].type == "k" and states[j].type == "r":
+
+                S_plus[i, j] = int(states[i].vector[mu + N*spin] == 0) * S[states[i].number(), states[j].number()]
+
+            elif states[i].type == "k" and states[j].type == "k":
+
+                S_plus[i, j] = int(states[i].vector[mu + N*spin] == 0) * int(i == j)
+
+    return S_plus
+
+
+
+
+def H_plus_k(states, N, mu, spin, t, U, mu1):
+
+    dim = len(states)
+
+    S = np.load(f"S_{N}.npy")
+
+    H_plus = np.zeros((dim, dim), dtype=complex)
+
+    for i in range(dim):
+        for j in range(dim):
+
+            if states[i].type == "r" and states[j].type == "r":
+
+                H_plus[i, j] = 0
+
+                etats = etats_decomposes(N)
+
+                for l in range(len(etats)):
+                    for m in range(len(etats)):
+
+                        delta = int(np.array_equal(etats[l], etats[m]))
+
+                        term1 = U/N * sum(etats[m][N*int(spin == 0): N*(2-int(spin == 1))]) * delta
+                        term2 = HU_mu(etats[l], etats[m], N, mu, spin, U, "e")
+                        term3 = -2*t * np.cos((2*np.pi*mu)/N) * delta
+                        term4 = -mu1 * delta
+                        term5 = ham_k(etats[l], etats[m], N, t, U, mu1)
+
+                        s1 = S[states[i].number(), int(''.join(map(str, etats[l])), 2) + 4**N]
+                        s2 = S[int(''.join(map(str, etats[m])), 2) + 4**N, states[j].number()]
+
+                        H_plus[i, j] += s1 * s2 * (term2 + int(etats[m][mu + N*spin] == 0) * (term1 + term3 + term4 + term5)) 
+
+            elif states[i].type == "r" and states[j].type == "k":
+
+                H_plus[i, j] = 0
+
+                etats = etats_decomposes(N)
+
+                for l in range(len(etats)):
+                    
+                    delta = int(np.array_equal(etats[l], states[j].vector))
+
+                    term1 = U/N * sum(states[j].vector[N*int(spin == 0): N*(2-int(spin == 1))]) * delta
+                    term2 = HU_mu(etats[l], states[j].vector, N, mu, spin, U, "e")
+                    term3 = -2*t * np.cos((2*np.pi*mu)/N) * delta
+                    term4 = -mu1 * delta
+                    term5 = ham_k(etats[l], states[j].vector, N, t, U, mu1)
+
+                    s = S[states[i].number(), int(''.join(map(str, etats[l])), 2) + 4**N]
+
+                    H_plus[i, j] += s * (term2 + int(states[j].vector[mu + N*spin] == 0) * (term1 + term3 + term4 + term5))
+
+            elif states[i].type == "k" and states[j].type == "r":
+
+                H_plus[i, j] = 0
+
+                etats = etats_decomposes(N)
+
+                for l in range(len(etats)):
+
+                    delta = int(np.array_equal(states[i].vector, etats[l]))
+
+                    term1 = U/N * sum(etats[l][N*int(spin == 0): N*(2-int(spin == 1))]) * delta
+                    term2 = HU_mu(states[i].vector, etats[l], N, mu, spin, U, "e")
+                    term3 = -2*t * np.cos((2*np.pi*mu)/N) * delta
+                    term4 = -mu1 * delta
+                    term5 = ham_k(states[i].vector, etats[l], N, t, U, mu1)
+
+                    s = S[int(''.join(map(str, etats[l])), 2) + 4**N, states[j].number()]
+
+                    H_plus[i, j] += s * (term2 + int(etats[l][mu + N*spin] == 0) * (term1 + term3 + term4 + term5))
+
+            elif states[i].type == "k" and states[j].type == "k":
+
+                delta = int(i == j)
+
+                term1 = U/N * sum(states[j].vector[N*int(spin == 0): N*(2-int(spin == 1))]) * delta
+                term2 = HU_mu(states[i].vector, states[j].vector, N, mu, spin, U, "e")
+                term3 = -2*t * np.cos((2*np.pi*mu)/N) * delta
+                term4 = -mu1 * delta
+                term5 = ham_k(states[i].vector, states[j].vector, N, t, U, mu1)
+
+                H_plus[i, j] = term2 + int(states[j].vector[mu + N*spin] == 0) * (term1 + term3 + term4 + term5)
+
+    return H_plus
+
+
+
+
+def S_moins_k(states, N, mu, spin):
+
+    dim = len(states)
+
+    S = np.load(f"S_{N}.npy")
+
+    S_moins = np.zeros((dim, dim), dtype=complex)
+
+    for i in range(dim):
+        for j in range(dim):
+
+            if states[i].type == "r" and states[j].type == "r":
+
+                S_moins[i, j] = 0
+
+                etats = etats_decomposes(N)
+
+                for l in range(len(etats)):
+
+                    s1 = S[states[i].number(), int(''.join(map(str, etats[l])), 2) + 4**N]
+                    s2 = S[int(''.join(map(str, etats[l])), 2) + 4**N, states[j].number()]
+
+                    S_moins[i, j] += int(etats[l][mu + N*spin] == 1) * s1 * s2
+
+            elif states[i].type == "r" and states[j].type == "k":
+
+                S_moins[i, j] = int(states[j].vector[mu + N*spin] == 1) * S[states[i].number(), states[j].number()]
+
+            elif states[i].type == "k" and states[j].type == "r":
+
+                S_moins[i, j] = int(states[i].vector[mu + N*spin] == 1) * S[states[i].number(), states[j].number()]
+
+            elif states[i].type == "k" and states[j].type == "k":
+
+                S_moins[i, j] = int(states[i].vector[mu + N*spin] == 1) * int(i == j)
+
+    return S_moins
+
+
+
+
+def H_moins_k(states, N, mu, spin, t, U, mu1):
+
+    dim = len(states)
+
+    S = np.load(f"S_{N}.npy")
+
+    H_moins = np.zeros((dim, dim), dtype=complex)
+
+    for i in range(dim):
+        for j in range(dim):
+
+            if states[i].type == "r" and states[j].type == "r":
+
+                H_moins[i, j] = 0
+
+                etats = etats_decomposes(N)
+
+                for l in range(len(etats)):
+                    for m in range(len(etats)):
+
+                        delta = int(np.array_equal(etats[l], etats[m]))
+
+                        term1 = -U/N * sum(etats[m][N*int(spin == 0): N*(2-int(spin == 1))]) * delta
+                        term2 = HU_mu(etats[l], etats[m], N, mu, spin, U, "h")
+                        term3 = 2*t * np.cos((2*np.pi*mu)/N) * delta
+                        term4 = mu1 * delta
+                        term5 = ham_k(etats[l], etats[m], N, t, U, mu1)
+
+                        s1 = S[states[i].number(), int(''.join(map(str, etats[l])), 2) + 4**N]
+                        s2 = S[int(''.join(map(str, etats[m])), 2) + 4**N, states[j].number()]
+
+                        H_moins[i, j] += s1 * s2 * (term2 + int(etats[m][mu + N*spin] == 1) * (term1 + term3 + term4 + term5)) 
+                     
+
+            elif states[i].type == "r" and states[j].type == "k":
+
+                H_moins[i, j] = 0
+
+                etats = etats_decomposes(N)
+
+                for l in range(len(etats)):
+                    
+                    delta = int(np.array_equal(etats[l], states[j].vector))
+
+                    term1 = -U/N * sum(states[j].vector[N*int(spin == 0): N*(2-int(spin == 1))]) * delta
+                    term2 = HU_mu(etats[l], states[j].vector, N, mu, spin, U, "h")
+                    term3 = 2*t * np.cos((2*np.pi*mu)/N) * delta
+                    term4 = mu1 * delta
+                    term5 = ham_k(etats[l], states[j].vector, N, t, U, mu1)
+
+                    s = S[states[i].number(), int(''.join(map(str, etats[l])), 2) + 4**N]
+
+                    H_moins[i, j] += s * (term2 + int(states[j].vector[mu + N*spin] == 1) * (term1 + term3 + term4 + term5))
+
+
+            elif states[i].type == "k" and states[j].type == "r":
+
+                H_moins[i, j] = 0
+
+                etats = etats_decomposes(N)
+
+                for l in range(len(etats)):
+
+                    delta = int(np.array_equal(states[i].vector, etats[l]))
+
+                    term1 = -U/N * sum(etats[l][N*int(spin == 0): N*(2-int(spin == 1))]) * delta
+                    term2 = HU_mu(states[i].vector, etats[l], N, mu, spin, U, "h")
+                    term3 = 2*t * np.cos((2*np.pi*mu)/N) * delta
+                    term4 = mu1 * delta
+                    term5 = ham_k(states[i].vector, etats[l], N, t, U, mu1)
+
+                    s = S[int(''.join(map(str, etats[l])), 2) + 4**N, states[j].number()]
+
+                    H_moins[i, j] += s * (term2 + int(etats[l][mu + N*spin] == 1) * (term1 + term3 + term4 + term5))
+
+            elif states[i].type == "k" and states[j].type == "k":
+
+                delta = int(i == j)
+
+                term1 = -U/N * sum(states[j].vector[N*int(spin == 0): N*(2-int(spin == 1))]) * delta
+                term2 = HU_mu(states[i].vector, states[j].vector, N, mu, spin, U, "h")
+                term3 = 2*t * np.cos((2*np.pi*mu)/N) * delta
+                term4 = mu1 * delta
+                term5 = ham_k(states[i].vector, states[j].vector, N, t, U, mu1)
+
+                H_moins[i, j] = term2 + int(states[j].vector[mu + N*spin] == 1) * (term1 + term3 + term4 + term5)
+
+
+    return H_moins
+
+
+
+
+def mix_green(N, spin, t, U, mu, basis):
+
+    states = []
+
+    for etat_r in r:
+
+        ket_r = Ket(list(map(int, format(etat_r, f'0{2*N}b'))), "r", str(etat_r) + "r")
+        states.append(ket_r)
+
+    for etat_k in k:
+
+        ket_k = Ket(list(map(int, format(etat_k, f'0{2*N}b'))), "k", str(etat_k) + "k")
+        states.append(ket_k)
+
+    E, H, S, omega, overfilled = ground_energy(states, N, t, U, mu)
+
+    E0 = E[0]
+    Omega = omega[0]
+
+    w = np.linspace(-10, 10, 2000)
+    dos = np.zeros(len(w))
+
+    for i in range(N):
+
+        debut = time.perf_counter()
+        
+        if basis == "r":
+            S_plus = S_plus_r(states, N, i, spin)
+            H_plus = H_plus_r(states, N, i, spin, t, U, mu)
+
+        elif basis == "k":
+            S_plus = S_plus_k(states, N, i, spin)
+            H_plus = H_plus_k(states, N, i, spin, t, U, mu)
+
+        fin = time.perf_counter()
+
+        print(f"Matrix creation : {fin-debut:.6f} s")
+
+        debut = time.perf_counter()
+
+        eig_S_plus = np.linalg.eigh(S_plus)[0]
+
+        if np.any(np.isclose(eig_S_plus, 0, atol=1e-6)):
+        
+            e_eigvals, e_eigenvectors = gen_diagonalization(H_plus, S_plus)       
+
+        else:
+
+            e_eigvals, e_eigenvectors = sp.linalg.eigh(H_plus, S_plus)
+
+       
+        if basis == "r":
+            S_moins = S_moins_r(states, N, i, spin)
+            H_moins = H_moins_r(states, N, i, spin, t, U, mu)
+
+        if basis == "k":
+            S_moins = S_moins_k(states, N, i, spin)
+            H_moins = H_moins_k(states, N, i, spin, t, U, mu)
+
+        eig_S_moins = np.linalg.eigh(S_moins)[0]
+
+        if np.any(np.isclose(eig_S_moins, 0, atol=1e-6)):
+
+            h_eigvals, h_eigenvectors = gen_diagonalization(H_moins, S_moins)       
+
+        else:
+
+            h_eigvals, h_eigenvectors = sp.linalg.eigh(H_moins, S_moins)
+
+        fin = time.perf_counter()
+
+        print(f"Diagonalization : {fin-debut:.6f} s")
+
+        debut = time.perf_counter()
+
+        Q_e = Omega.conj().T @ S_plus @ e_eigenvectors
+        Q_h = Omega.conj().T @ S_moins @ h_eigenvectors
+
+        g = green(w, Q_e, Q_h, e_eigvals, h_eigvals, E0, N)  
+
+        fin = time.perf_counter()
+
+        print(f"Green : {fin-debut:.6f} s")      
+
+        dos += g
+
+    #plt.plot(w, g + i, "r")
+    #plt.show()
+
+    return w, dos
+
+
+
+def green(x, Q_e, Q_h, e_eigs, h_eigs, E0, N, eta=0.05j):
+    
+    green_function = np.zeros(len(x))
+
+    for i in range(len(x)):
+        
+        value = 0
+        
+        for j in range(len(Q_e)):
+            
+            value += np.abs(Q_e[j])**2/(x[i] + eta + E0 - e_eigs[j]) 
+            
+        for j in range(len(Q_h)):
+
+            value += np.abs(Q_h[j])**2/(x[i] + eta - E0 + h_eigs[j])
+        
+        green_function[i] = value.imag/(-N*np.pi)
+    
+    return green_function
+
+
+w, dos = mix_green(N, spin, t, U, mu, basis)
+
+plt.plot(w, dos, "r")
+
+plt.xlabel(r"$\omega$")
+plt.ylabel(r"$n(\omega)$")
+plt.title(rf"#sites = {N}    $U = {U}$    $\mu = {mu}$    $N = {N}$    $S_z = 0$")
+plt.grid()
+plt.show()
+
+
+# Graphique des DOS (r, k et exact) (ne fonctionne que pour N = 4, t = 1 et U = 2, 4, 8, ou 12)
+
+#w_k, dos_k = mix_green(N, spin, t, U, mu, "k")
+#w_r, dos_r = mix_green(N, spin, t, U, mu, "r")
+#
+#
+#data = np.loadtxt(f"dos_u{U}", skiprows=2)
+#
+#x = data[:, 0]
+#y1 = data[:, 1]
+#y2 = data[:, 2]
+#
+#plt.plot(x, y1 + y2, "black", label="exact")
+#plt.plot(w_r, dos_r, "r", label="r")
+#plt.plot(w_k, dos_k, "b", label="k")
+#
+#plt.xlabel(r'$\omega$')
+#plt.ylabel(r'$n(\omega)$')
+#
+#plt.title(rf"#sites = {N}    $U = {U}$    $\mu = {mu}$    $N = {N}$    $S_z = 0$")
+#
+#plt.legend()
+#plt.grid()
+#plt.show()
+
+
+# Graphique de 4 DOS (r, k et exact) (U = 2, 4, 8, 12) en une figure
+
+#U_values = [2, 4, 8, 12]
+#
+#fig, axes = plt.subplots(4, 1, figsize=(8, 12), sharex=True)
+#
+#for ax, U in zip(axes, U_values):
+#
+#    w_k, dos_k = mix_green(N, spin, t, U, U/2, "k")
+#    w_r, dos_r = mix_green(N, spin, t, U, U/2, "r")
+#
+#    data = np.loadtxt(f"dos_u{U}", skiprows=2)
+#
+#    x = data[:, 0]
+#    y1 = data[:, 1]
+#    y2 = data[:, 2]
+#
+#    ax.plot(x, y1 + y2, "black", label="exact")
+#    ax.plot(w_r, dos_r, "r", label="r")
+#    ax.plot(w_k, dos_k, "b", label="k")
+#
+#    ax.set_ylabel(r"$n(\omega)$")
+#    ax.set_title(rf"$U = {U}$", loc="left")
+#
+#    ax.legend()
+#    ax.grid()
+#
+#
+#axes[-1].set_xlabel(r"$\omega$")
+#
+#fig.suptitle(rf"#sites = {N}    $t = {t}$    $\mu = U / 2$    $S_z = 0$", fontsize=14)
+#
+#plt.tight_layout()
+#plt.show()
+
+
+
+
+## Fonction de Green non orthonormee (construction d'un seul sous-espace excite)
+
+
+
+# Etats de la base de depart
+
+#r = [51, 53, 54, 57, 58, 60, 83, 85, 86, 89, 90, 92, 99, 101, 102, 105, 106, 108, 147, 149, 150, 153, 154, 156, 163, 165, 166, 169, 170, 172, 195, 197, 198, 201, 202, 204]
+#k = []
+
+#r = [51, 53, 54, 57, 58, 60, 83, 85, 86, 89, 90, 92, 99, 101, 102, 105, 106, 108, 147, 149, 150, 153, 154, 156, 163, 165, 166, 169, 170, 172, 195, 197, 198, 201, 202, 204]
+#k = [51, 53, 54, 57, 58, 60, 83, 85, 86, 89, 90, 92, 99, 101, 102, 105, 106, 108, 147, 149, 150, 153, 154, 156, 163, 165, 166, 169, 170, 172, 195, 197, 198, 201, 202, 204]
+
+r = [90, 165]
+k = [90, 165, 153, 204]
+
+#r = []
+#k = [51, 60, 90, 102, 105, 150, 153, 165, 195, 204]
+
+#r = [51, 102, 153, 204]
+#k = [51, 102, 153, 204]
+
+
+#r = [51, 54, 57, 58, 83, 85, 86, 89, 90, 92, 99, 101, 105, 106, 108, 147, 149, 154, 156, 163, 165, 166, 169, 172, 195, 197, 201]
+#k = [53, 60, 102, 150, 153, 170, 198, 202, 204]
+
+
+#r = [85, 170]
+#k = [51, 60, 90, 153, 165, 195, 204]
+
+
+#r = [51, 60, 90, 165, 195, 204]
+#k = [85, 153, 170, 204]
+
+
+#r = [85, 170]
+#k = [90, 102, 105, 150, 153, 165, 204]
+
+
+#r = [51, 60, 153, 204]
+#k = []
+
+
+# Parametres du systeme
+
+N = 4
+t = 1
+U = 2
+mu = U/2
+
+# Parametres de l'excitation
+
+spin = 0        # Spin up --> 0  /  Spin down --> 1
+basis = "k"
+
+
+
+def etats_decomposes(N):
+    
+    ensemble = []
+
+    for positions in combinations(range(N), N//2):
+
+        liste = [0] * N
+        
+        for i in positions:
+            liste[i] = 1
+
+        ensemble.append(liste)
+
+    resultat = []
+
+    for a in ensemble:
+        for b in ensemble:
+            resultat.append(a + b)
+
+    return resultat
+
+
+
+def Ht_mu(state1, state2, N, mu, t, excitation):
+
+    diff = [b - a for a, b in zip(state1, state2)]
+
+    if diff.count(1) != 1 or diff.count(-1) != 1:
+        return 0
+
+    i = diff.index(1)
+    j = diff.index(-1)
+    
+    if excitation == "e":
+        if j != mu:
+            return 0
+    
+    elif excitation == "h":
+        if i != mu:
+            return 0
+
+    if abs(i - j) == 1:
+        exp = 0
+
+    elif abs(i - j) == N - 1:
+        exp = N // 2 - 1
+
+    else:
+        return 0
+
+    return t * (-1) ** exp
+
+
+
+def S_plus_r(states, N, mu, spin):
+
+    dim = len(states)
+
+    S = np.load(f"S_{N}.npy")
+
+    S_plus = np.zeros((dim, dim), dtype=complex)
+
+    for i in range(dim):
+        for j in range(dim):
+
+            if states[i].type == "r" and states[j].type == "r":
+
+                S_plus[i, j] = int(i == j) * int(states[i].vector[mu + N*spin] == 0)
+
+            elif states[i].type == "r" and states[j].type == "k":
+
+                S_plus[i, j] = int(states[i].vector[mu + N*spin] == 0) * S[states[i].number(), states[j].number()]
+
+            elif states[i].type == "k" and states[j].type == "r":
+
+                S_plus[i, j] = int(states[j].vector[mu + N*spin] == 0) * S[states[i].number(), states[j].number()]
+
+            elif states[i].type == "k" and states[j].type == "k":
+
+                S_plus[i, j] = 0
+
+                etats = etats_decomposes(N)
+
+                for l in range(len(etats)):
+
+                    s1 = S[states[i].number(), int(''.join(map(str, etats[l])), 2)]
+                    s2 = S[int(''.join(map(str, etats[l])), 2), states[j].number()]
+
+                    S_plus[i, j] += int(etats[l][mu + N*spin] == 0) * s1 * s2
+
+    return S_plus
+
+
+
+
+def H_plus_r(states, N, mu, spin, t, U, mu1):
+
+    dim = len(states)
+
+    S = np.load(f"S_{N}.npy")
+
+    H_plus = np.zeros((dim, dim), dtype=complex)
+
+    for i in range(dim):
+        for j in range(dim):
+
+            if states[i].type == "r" and states[j].type == "r":
+
+                delta = int(i == j)
+
+                term1 = Ht_mu(states[i].vector, states[j].vector, N, mu + N*spin, t, "e")
+                term2 = U * int(states[j].vector[mu + N*int(spin == 0)] == 1) * delta
+                term3 = -mu1 * delta
+                term4 = ham_r(states[i].vector, states[j].vector, N, t, U, mu1)
+
+                H_plus[i, j] = term1 + int(states[j].vector[mu + N*spin] == 0) * (term2 + term3 + term4)
+                     
+
+            elif states[i].type == "r" and states[j].type == "k":
+
+                H_plus[i, j] = 0
+
+                etats = etats_decomposes(N)
+
+                for l in range(len(etats)):
+                    
+                    delta = int(np.array_equal(states[i].vector, etats[l]))
+
+                    term1 = Ht_mu(states[i].vector, etats[l], N, mu + N*spin, t, "e")
+                    term2 = U * int(etats[l][mu + N*int(spin == 0)] == 1) * delta
+                    term3 = -mu1 * delta
+                    term4 = ham_r(states[i].vector, etats[l], N, t, U, mu1)
+
+                    s = S[int(''.join(map(str, etats[l])), 2), states[j].number()]
+
+                    H_plus[i, j] += s * (term1 + int(etats[l][mu + N*spin] == 0) * (term2 + term3 + term4))
+
+            elif states[i].type == "k" and states[j].type == "r":
+
+                H_plus[i, j] = 0
+
+                etats = etats_decomposes(N)
+
+                for l in range(len(etats)):
+
+                    delta = int(np.array_equal(etats[l], states[j].vector))
+
+                    term1 = Ht_mu(etats[l], states[j].vector, N, mu + N*spin, t, "e")
+                    term2 = U * int(states[j].vector[mu + N*int(spin == 0)] == 1) * delta
+                    term3 = -mu1 * delta
+                    term4 = ham_r(etats[l], states[j].vector, N, t, U, mu1)
+
+                    s = S[states[i].number(), int(''.join(map(str, etats[l])), 2)]
+
+                    H_plus[i, j] += s * (term1 + int(states[j].vector[mu + N*spin] == 0) * (term2 + term3 + term4))
+
+            elif states[i].type == "k" and states[j].type == "k":
+
+                H_plus[i, j] = 0
+
+                etats = etats_decomposes(N)
+
+                for l in range(len(etats)):
+                    for m in range(len(etats)):
+
+                        delta = int(np.array_equal(etats[l], etats[m]))
+
+                        term1 = Ht_mu(etats[l], etats[m], N, mu + N*spin, t, "e")
+                        term2 = U * int(etats[m][mu + N*int(spin == 0)] == 1) * delta
+                        term3 = -mu1 * delta
+                        term4 = ham_r(etats[l], etats[m], N, t, U, mu1)
+
+                        s1 = S[states[i].number(), int(''.join(map(str, etats[l])), 2)]
+                        s2 = S[int(''.join(map(str, etats[m])), 2), states[j].number()]
+
+                        H_plus[i, j] += s1 * s2 * (term1 + int(etats[m][mu + N*spin] == 0) * (term2 + term3 + term4)) 
+
+
+    return H_plus
+
+
+
+
+def S_moins_r(states, N, mu, spin):
+
+    dim = len(states)
+
+    S = np.load(f"S_{N}.npy")
+
+    S_moins = np.zeros((dim, dim), dtype=complex)
+
+    for i in range(dim):
+        for j in range(dim):
+
+            if states[i].type == "r" and states[j].type == "r":
+
+                S_moins[i, j] = int(i == j) * int(states[i].vector[mu + N*spin] == 1)
+
+            elif states[i].type == "r" and states[j].type == "k":
+
+                S_moins[i, j] = int(states[i].vector[mu + N*spin] == 1) * S[states[i].number(), states[j].number()]
+
+            elif states[i].type == "k" and states[j].type == "r":
+
+                S_moins[i, j] = int(states[j].vector[mu + N*spin] == 1) * S[states[i].number(), states[j].number()]
+
+            elif states[i].type == "k" and states[j].type == "k":
+
+                S_moins[i, j] = 0
+
+                etats = etats_decomposes(N)
+
+                for l in range(len(etats)):
+
+                    s1 = S[states[i].number(), int(''.join(map(str, etats[l])), 2)]
+                    s2 = S[int(''.join(map(str, etats[l])), 2), states[j].number()]
+                    
+                    S_moins[i, j] += int(etats[l][mu + N*spin] == 1) * s1 * s2
+
+    return S_moins
+
+
+
+
+def H_moins_r(states, N, mu, spin, t, U, mu1):
+
+    dim = len(states)
+
+    S = np.load(f"S_{N}.npy")
+
+    H_moins = np.zeros((dim, dim), dtype=complex)
+
+    for i in range(dim):
+        for j in range(dim):
+
+            if states[i].type == "r" and states[j].type == "r":
+
+                delta = int(i == j)
+
+                term1 = Ht_mu(states[i].vector, states[j].vector, N, mu + N*spin, t, "h")
+                term2 = -U * int(states[j].vector[mu + N*int(spin == 0)] == 1) * delta
+                term3 = mu1 * delta
+                term4 = ham_r(states[i].vector, states[j].vector, N, t, U, mu1)
+
+                H_moins[i, j] = term1 + int(states[j].vector[mu + N*spin] == 1) * (term2 + term3 + term4)
+                     
+
+            elif states[i].type == "r" and states[j].type == "k":
+
+                H_moins[i, j] = 0
+
+                etats = etats_decomposes(N)
+
+                for l in range(len(etats)):
+                    
+                    delta = int(np.array_equal(states[i].vector, etats[l]))
+
+                    term1 = Ht_mu(states[i].vector, etats[l], N, mu + N*spin, t, "h")
+                    term2 = -U * int(etats[l][mu + N*int(spin == 0)] == 1) * delta
+                    term3 = mu1 * delta
+                    term4 = ham_r(states[i].vector, etats[l], N, t, U, mu1)
+
+                    s = S[int(''.join(map(str, etats[l])), 2), states[j].number()]
+
+                    H_moins[i, j] += s * (term1 + int(etats[l][mu + N*spin] == 1) * (term2 + term3 + term4))
+
+            elif states[i].type == "k" and states[j].type == "r":
+
+                H_moins[i, j] = 0
+
+                etats = etats_decomposes(N)
+
+                for l in range(len(etats)):
+
+                    delta = int(np.array_equal(etats[l], states[j].vector))
+
+                    term1 = Ht_mu(etats[l], states[j].vector, N, mu + N*spin, t, "h")
+                    term2 = -U * int(states[j].vector[mu + N*int(spin == 0)] == 1) * delta
+                    term3 = mu1 * delta
+                    term4 = ham_r(etats[l], states[j].vector, N, t, U, mu1)
+
+                    s = S[states[i].number(), int(''.join(map(str, etats[l])), 2)]
+
+                    H_moins[i, j] += s * (term1 + int(states[j].vector[mu + N*spin] == 1) * (term2 + term3 + term4))
+
+            elif states[i].type == "k" and states[j].type == "k":
+
+                H_moins[i, j] = 0
+
+                etats = etats_decomposes(N)
+
+                for l in range(len(etats)):
+                    for m in range(len(etats)):
+
+                        delta = int(np.array_equal(etats[l], etats[m]))
+
+                        term1 = Ht_mu(etats[l], etats[m], N, mu + N*spin, t, "h")
+                        term2 = -U * int(etats[m][mu + N*int(spin == 0)] == 1) * delta
+                        term3 = mu1 * delta
+                        term4 = ham_r(etats[l], etats[m], N, t, U, mu1)
+
+                        s1 = S[states[i].number(), int(''.join(map(str, etats[l])), 2)]
+                        s2 = S[int(''.join(map(str, etats[m])), 2), states[j].number()]
+
+                        H_moins[i, j] += s1 * s2 * (term1 + int(etats[m][mu + N*spin] == 1) * (term2 + term3 + term4)) 
+
+
+    return H_moins
+
+
+
+def HU_mu(state1, state2, N, mu, spin, U, excitation):
+    
+    diff = [b - a for a, b in zip(state1, state2)]
+
+    if diff[:N].count(1) != 1 or diff[:N].count(-1) != 1 or diff[N:].count(1) != 1 or diff[N:].count(-1) != 1:
+        return 0
+
+    i = diff[:N].index(1)
+    j = diff[:N].index(-1)
+    k = diff[N:].index(1) + N
+    l = diff[N:].index(-1) + N
+
+    state_up = state2[:N]
+    state_down = state2[N:]
+
+
+    if excitation == "e":
+
+        if spin == 0 and j != mu:
+            return 0
+
+        elif spin == 1 and l != mu + N:
+            return 0
+
+
+    elif excitation == "h":
+
+        if spin == 0 and i != mu:
+            return 0
+
+        elif spin == 1 and k != mu + N:
+            return 0
+
+
+    if (k-l) % N != (j-i) % N:
+        return 0
+    
+    exp = 0
+
+    if i < j:
+        exp += sum(state_up[:j]) + sum(state_up[:i]) - 1
+
+    elif i > j:
+        exp += sum(state_up[:j]) + sum(state_up[:i])
+
+    if k < l:
+        exp += sum(state_down[:l-N]) + sum(state_down[:k-N]) - 1
+
+    elif k > l:
+        exp += sum(state_down[:l-N]) + sum(state_down[:k-N])
+
+    return -U/N * (-1) ** exp
+
+
+
+
+def S_plus_k(states, N, mu, spin):
+
+    dim = len(states)
+
+    S = np.load(f"S_{N}.npy")
+
+    S_plus = np.zeros((dim, dim), dtype=complex)
+
+    for i in range(dim):
+        for j in range(dim):
+
+            if states[i].type == "r" and states[j].type == "r":
+
+                S_plus[i, j] = 0
+
+                etats = etats_decomposes(N)
+
+                for l in range(len(etats)):
+
+                    s1 = S[states[i].number(), int(''.join(map(str, etats[l])), 2) + 4**N]
+                    s2 = S[int(''.join(map(str, etats[l])), 2) + 4**N, states[j].number()]
+
+                    S_plus[i, j] += int(etats[l][mu + N*spin] == 0) * s1 * s2
+
+            elif states[i].type == "r" and states[j].type == "k":
+
+                S_plus[i, j] = int(states[j].vector[mu + N*spin] == 0) * S[states[i].number(), states[j].number()]
+
+            elif states[i].type == "k" and states[j].type == "r":
+
+                S_plus[i, j] = int(states[i].vector[mu + N*spin] == 0) * S[states[i].number(), states[j].number()]
+
+            elif states[i].type == "k" and states[j].type == "k":
+
+                S_plus[i, j] = int(states[i].vector[mu + N*spin] == 0) * int(i == j)
+
+    return S_plus
+
+
+
+
+def H_plus_k(states, N, mu, spin, t, U, mu1):
+
+    dim = len(states)
+
+    S = np.load(f"S_{N}.npy")
+
+    H_plus = np.zeros((dim, dim), dtype=complex)
+
+    for i in range(dim):
+        for j in range(dim):
+
+            if states[i].type == "r" and states[j].type == "r":
+
+                H_plus[i, j] = 0
+
+                etats = etats_decomposes(N)
+
+                for l in range(len(etats)):
+                    for m in range(len(etats)):
+
+                        delta = int(np.array_equal(etats[l], etats[m]))
+
+                        term1 = U/N * sum(etats[m][N*int(spin == 0): N*(2-int(spin == 1))]) * delta
+                        term2 = HU_mu(etats[l], etats[m], N, mu, spin, U, "e")
+                        term3 = -2*t * np.cos((2*np.pi*mu)/N) * delta
+                        term4 = -mu1 * delta
+                        term5 = ham_k(etats[l], etats[m], N, t, U, mu1)
+
+                        s1 = S[states[i].number(), int(''.join(map(str, etats[l])), 2) + 4**N]
+                        s2 = S[int(''.join(map(str, etats[m])), 2) + 4**N, states[j].number()]
+
+                        H_plus[i, j] += s1 * s2 * (term2 + int(etats[m][mu + N*spin] == 0) * (term1 + term3 + term4 + term5)) 
+
+            elif states[i].type == "r" and states[j].type == "k":
+
+                H_plus[i, j] = 0
+
+                etats = etats_decomposes(N)
+
+                for l in range(len(etats)):
+                    
+                    delta = int(np.array_equal(etats[l], states[j].vector))
+
+                    term1 = U/N * sum(states[j].vector[N*int(spin == 0): N*(2-int(spin == 1))]) * delta
+                    term2 = HU_mu(etats[l], states[j].vector, N, mu, spin, U, "e")
+                    term3 = -2*t * np.cos((2*np.pi*mu)/N) * delta
+                    term4 = -mu1 * delta
+                    term5 = ham_k(etats[l], states[j].vector, N, t, U, mu1)
+
+                    s = S[states[i].number(), int(''.join(map(str, etats[l])), 2) + 4**N]
+
+                    H_plus[i, j] += s * (term2 + int(states[j].vector[mu + N*spin] == 0) * (term1 + term3 + term4 + term5))
+
+            elif states[i].type == "k" and states[j].type == "r":
+
+                H_plus[i, j] = 0
+
+                etats = etats_decomposes(N)
+
+                for l in range(len(etats)):
+
+                    delta = int(np.array_equal(states[i].vector, etats[l]))
+
+                    term1 = U/N * sum(etats[l][N*int(spin == 0): N*(2-int(spin == 1))]) * delta
+                    term2 = HU_mu(states[i].vector, etats[l], N, mu, spin, U, "e")
+                    term3 = -2*t * np.cos((2*np.pi*mu)/N) * delta
+                    term4 = -mu1 * delta
+                    term5 = ham_k(states[i].vector, etats[l], N, t, U, mu1)
+
+                    s = S[int(''.join(map(str, etats[l])), 2) + 4**N, states[j].number()]
+
+                    H_plus[i, j] += s * (term2 + int(etats[l][mu + N*spin] == 0) * (term1 + term3 + term4 + term5))
+
+            elif states[i].type == "k" and states[j].type == "k":
+
+                delta = int(i == j)
+
+                term1 = U/N * sum(states[j].vector[N*int(spin == 0): N*(2-int(spin == 1))]) * delta
+                term2 = HU_mu(states[i].vector, states[j].vector, N, mu, spin, U, "e")
+                term3 = -2*t * np.cos((2*np.pi*mu)/N) * delta
+                term4 = -mu1 * delta
+                term5 = ham_k(states[i].vector, states[j].vector, N, t, U, mu1)
+
+                H_plus[i, j] = term2 + int(states[j].vector[mu + N*spin] == 0) * (term1 + term3 + term4 + term5)
+
+    return H_plus
+
+
+
+
+def S_moins_k(states, N, mu, spin):
+
+    dim = len(states)
+
+    S = np.load(f"S_{N}.npy")
+
+    S_moins = np.zeros((dim, dim), dtype=complex)
+
+    for i in range(dim):
+        for j in range(dim):
+
+            if states[i].type == "r" and states[j].type == "r":
+
+                S_moins[i, j] = 0
+
+                etats = etats_decomposes(N)
+
+                for l in range(len(etats)):
+
+                    s1 = S[states[i].number(), int(''.join(map(str, etats[l])), 2) + 4**N]
+                    s2 = S[int(''.join(map(str, etats[l])), 2) + 4**N, states[j].number()]
+
+                    S_moins[i, j] += int(etats[l][mu + N*spin] == 1) * s1 * s2
+
+            elif states[i].type == "r" and states[j].type == "k":
+
+                S_moins[i, j] = int(states[j].vector[mu + N*spin] == 1) * S[states[i].number(), states[j].number()]
+
+            elif states[i].type == "k" and states[j].type == "r":
+
+                S_moins[i, j] = int(states[i].vector[mu + N*spin] == 1) * S[states[i].number(), states[j].number()]
+
+            elif states[i].type == "k" and states[j].type == "k":
+
+                S_moins[i, j] = int(states[i].vector[mu + N*spin] == 1) * int(i == j)
+
+    return S_moins
+
+
+
+
+def H_moins_k(states, N, mu, spin, t, U, mu1):
+
+    dim = len(states)
+
+    S = np.load(f"S_{N}.npy")
+
+    H_moins = np.zeros((dim, dim), dtype=complex)
+
+    for i in range(dim):
+        for j in range(dim):
+
+            if states[i].type == "r" and states[j].type == "r":
+
+                H_moins[i, j] = 0
+
+                etats = etats_decomposes(N)
+
+                for l in range(len(etats)):
+                    for m in range(len(etats)):
+
+                        delta = int(np.array_equal(etats[l], etats[m]))
+
+                        term1 = -U/N * sum(etats[m][N*int(spin == 0): N*(2-int(spin == 1))]) * delta
+                        term2 = HU_mu(etats[l], etats[m], N, mu, spin, U, "h")
+                        term3 = 2*t * np.cos((2*np.pi*mu)/N) * delta
+                        term4 = mu1 * delta
+                        term5 = ham_k(etats[l], etats[m], N, t, U, mu1)
+
+                        s1 = S[states[i].number(), int(''.join(map(str, etats[l])), 2) + 4**N]
+                        s2 = S[int(''.join(map(str, etats[m])), 2) + 4**N, states[j].number()]
+
+                        H_moins[i, j] += s1 * s2 * (term2 + int(etats[m][mu + N*spin] == 1) * (term1 + term3 + term4 + term5)) 
+                     
+
+            elif states[i].type == "r" and states[j].type == "k":
+
+                H_moins[i, j] = 0
+
+                etats = etats_decomposes(N)
+
+                for l in range(len(etats)):
+                    
+                    delta = int(np.array_equal(etats[l], states[j].vector))
+
+                    term1 = -U/N * sum(states[j].vector[N*int(spin == 0): N*(2-int(spin == 1))]) * delta
+                    term2 = HU_mu(etats[l], states[j].vector, N, mu, spin, U, "h")
+                    term3 = 2*t * np.cos((2*np.pi*mu)/N) * delta
+                    term4 = mu1 * delta
+                    term5 = ham_k(etats[l], states[j].vector, N, t, U, mu1)
+
+                    s = S[states[i].number(), int(''.join(map(str, etats[l])), 2) + 4**N]
+
+                    H_moins[i, j] += s * (term2 + int(states[j].vector[mu + N*spin] == 1) * (term1 + term3 + term4 + term5))
+
+
+            elif states[i].type == "k" and states[j].type == "r":
+
+                H_moins[i, j] = 0
+
+                etats = etats_decomposes(N)
+
+                for l in range(len(etats)):
+
+                    delta = int(np.array_equal(states[i].vector, etats[l]))
+
+                    term1 = -U/N * sum(etats[l][N*int(spin == 0): N*(2-int(spin == 1))]) * delta
+                    term2 = HU_mu(states[i].vector, etats[l], N, mu, spin, U, "h")
+                    term3 = 2*t * np.cos((2*np.pi*mu)/N) * delta
+                    term4 = mu1 * delta
+                    term5 = ham_k(states[i].vector, etats[l], N, t, U, mu1)
+
+                    s = S[int(''.join(map(str, etats[l])), 2) + 4**N, states[j].number()]
+
+                    H_moins[i, j] += s * (term2 + int(etats[l][mu + N*spin] == 1) * (term1 + term3 + term4 + term5))
+
+            elif states[i].type == "k" and states[j].type == "k":
+
+                delta = int(i == j)
+
+                term1 = -U/N * sum(states[j].vector[N*int(spin == 0): N*(2-int(spin == 1))]) * delta
+                term2 = HU_mu(states[i].vector, states[j].vector, N, mu, spin, U, "h")
+                term3 = 2*t * np.cos((2*np.pi*mu)/N) * delta
+                term4 = mu1 * delta
+                term5 = ham_k(states[i].vector, states[j].vector, N, t, U, mu1)
+
+                H_moins[i, j] = term2 + int(states[j].vector[mu + N*spin] == 1) * (term1 + term3 + term4 + term5)
+
+
+    return H_moins
+
+
+
+
+def mix_green(N, spin, t, U, mu, basis):
+
+    states = []
+
+    for etat_r in r:
+
+        ket_r = Ket(list(map(int, format(etat_r, f'0{2*N}b'))), "r", str(etat_r) + "r")
+        states.append(ket_r)
+
+    for etat_k in k:
+
+        ket_k = Ket(list(map(int, format(etat_k, f'0{2*N}b'))), "k", str(etat_k) + "k")
+        states.append(ket_k)
+
+    E, H, S, omega, overfilled = ground_energy(states, N, t, U, mu)
+
+    E0 = E[0]
+    Omega = omega[0]
+
+    w = np.linspace(-10, 10, 2000)
+    dos = np.zeros(len(w))
+
+    for i in range(N):
+
+        debut = time.perf_counter()
+        
+        if basis == "r":
+            S_plus = S_plus_r(states, N, i, spin)
+            H_plus = H_plus_r(states, N, i, spin, t, U, mu)
+
+        elif basis == "k":
+            S_plus = S_plus_k(states, N, i, spin)
+            H_plus = H_plus_k(states, N, i, spin, t, U, mu)
+
+        fin = time.perf_counter()
+
+        print(f"Matrix creation : {fin-debut:.6f} s")
+
+        debut = time.perf_counter()
+
+        eig_S_plus = np.linalg.eigh(S_plus)[0]
+
+        if np.any(np.isclose(eig_S_plus, 0, atol=1e-6)):
+        
+            e_eigvals, e_eigenvectors = gen_diagonalization(H_plus, S_plus)       
+
+        else:
+
+            e_eigvals, e_eigenvectors = sp.linalg.eigh(H_plus, S_plus)
+
+       
+        if basis == "r":
+            S_moins = S_moins_r(states, N, i, spin)
+            H_moins = H_moins_r(states, N, i, spin, t, U, mu)
+
+        if basis == "k":
+            S_moins = S_moins_k(states, N, i, spin)
+            H_moins = H_moins_k(states, N, i, spin, t, U, mu)
+
+        eig_S_moins = np.linalg.eigh(S_moins)[0]
+
+        if np.any(np.isclose(eig_S_moins, 0, atol=1e-6)):
+
+            h_eigvals, h_eigenvectors = gen_diagonalization(H_moins, S_moins)       
+
+        else:
+
+            h_eigvals, h_eigenvectors = sp.linalg.eigh(H_moins, S_moins)
+
+        fin = time.perf_counter()
+
+        print(f"Diagonalization : {fin-debut:.6f} s")
+
+        debut = time.perf_counter()
+
+        Q_e = Omega.conj().T @ S_plus @ e_eigenvectors
+        Q_h = Omega.conj().T @ S_moins @ h_eigenvectors
+
+        g = green(w, Q_e, Q_h, e_eigvals, h_eigvals, E0, N)  
+
+        fin = time.perf_counter()
+
+        print(f"Green : {fin-debut:.6f} s")      
+
+        dos += g
+
+    #plt.plot(w, g + i, "r")
+    #plt.show()
+
+    return w, dos
+
+
+
+def green(x, Q_e, Q_h, e_eigs, h_eigs, E0, N, eta=0.05j):
+    
+    green_function = np.zeros(len(x))
+
+    for i in range(len(x)):
+        
+        value = 0
+        
+        for j in range(len(Q_e)):
+            
+            value += np.abs(Q_e[j])**2/(x[i] + eta + E0 - e_eigs[j]) 
+            
+        for j in range(len(Q_h)):
+
+            value += np.abs(Q_h[j])**2/(x[i] + eta - E0 + h_eigs[j])
+        
+        green_function[i] = value.imag/(-N*np.pi)
+    
+    return green_function
+
+
+w, dos = mix_green(N, spin, t, U, mu, basis)
+
+plt.plot(w, dos, "r")
+
+plt.xlabel(r"$\omega$")
+plt.ylabel(r"$n(\omega)$")
+plt.title(rf"#sites = {N}    $U = {U}$    $\mu = {mu}$    $N = {N}$    $S_z = 0$")
+plt.grid()
+plt.show()
+
+
+# Graphique des DOS (r, k et exact) (ne fonctionne que pour N = 4, t = 1 et U = 2, 4, 8, ou 12)
+
+#w_k, dos_k = mix_green(N, spin, t, U, mu, "k")
+#w_r, dos_r = mix_green(N, spin, t, U, mu, "r")
+#
+#
+#data = np.loadtxt(f"dos_u{U}", skiprows=2)
+#
+#x = data[:, 0]
+#y1 = data[:, 1]
+#y2 = data[:, 2]
+#
+#plt.plot(x, y1 + y2, "black", label="exact")
+#plt.plot(w_r, dos_r, "r", label="r")
+#plt.plot(w_k, dos_k, "b", label="k")
+#
+#plt.xlabel(r'$\omega$')
+#plt.ylabel(r'$n(\omega)$')
+#
+#plt.title(rf"#sites = {N}    $U = {U}$    $\mu = {mu}$    $N = {N}$    $S_z = 0$")
+#
+#plt.legend()
+#plt.grid()
+#plt.show()
+
+
+# Graphique de 4 DOS (r, k et exact) (U = 2, 4, 8, 12) en une figure
+
+#U_values = [2, 4, 8, 12]
+#
+#fig, axes = plt.subplots(4, 1, figsize=(8, 12), sharex=True)
+#
+#for ax, U in zip(axes, U_values):
+#
+#    w_k, dos_k = mix_green(N, spin, t, U, U/2, "k")
+#    w_r, dos_r = mix_green(N, spin, t, U, U/2, "r")
+#
+#    data = np.loadtxt(f"dos_u{U}", skiprows=2)
+#
+#    x = data[:, 0]
+#    y1 = data[:, 1]
+#    y2 = data[:, 2]
+#
+#    ax.plot(x, y1 + y2, "black", label="exact")
+#    ax.plot(w_r, dos_r, "r", label="r")
+#    ax.plot(w_k, dos_k, "b", label="k")
+#
+#    ax.set_ylabel(r"$n(\omega)$")
+#    ax.set_title(rf"$U = {U}$", loc="left")
+#
+#    ax.legend()
+#    ax.grid()
+#
+#
+#axes[-1].set_xlabel(r"$\omega$")
+#
+#fig.suptitle(rf"#sites = {N}    $t = {t}$    $\mu = U / 2$    $S_z = 0$", fontsize=14)
+#
+#plt.tight_layout()
+#plt.show()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
