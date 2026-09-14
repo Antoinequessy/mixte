@@ -1119,7 +1119,7 @@ sites avec des parametres t, U et mu
 N = 4
 t = 1
 U = 2
-mu = 0
+mu = 1
 
 def block_diagonalization(N=4, t=1, U=2, mu=0):
 
@@ -1195,7 +1195,7 @@ def block_diagonalization(N=4, t=1, U=2, mu=0):
 
     return
 
-#block_diagonalization()
+#block_diagonalization(N, t, U, mu)
 
 
 
@@ -2565,7 +2565,7 @@ def mix_green(r, k, N, spin, t, U, mu, basis):
         else:
             h_eigvals, h_eigenvectors = sp.linalg.eigh(H_moins, S_moins)
 
-        # Creation des matrices de poids Q
+        # Creation des vecteurs de poids Q
         Q_e = Omega.conj().T @ S_plus @ e_eigenvectors
         Q_h = Omega.conj().T @ S_moins @ h_eigenvectors
 
@@ -2638,7 +2638,7 @@ def exact_green_2sites(t, U, mu):
             omega_plus = Omega[2:]
             omega_moins = Omega[:2]
 
-        # Creation des matrices de poids Q
+        # Creation des vecteurs de poids Q
         Q_e = omega_plus.conj().T @ e_eigvecs
         Q_h = omega_moins.conj().T @ h_eigvecs
 
