@@ -1804,7 +1804,7 @@ def plus_optimized_fund_6(N=6, t=1, U=2, eps=1e-10):
 ## Test etat mixte 2 sites
 
 """
-Retourne les etats mixtes (2) du systeme a 2 sites 
+Retourne les etats mixtes (n) du systeme a 2 sites 
 avec des parametres t et U suffisant a retrouver 
 l'energie fondamentale
 
@@ -1816,8 +1816,9 @@ translation avec le systeme a 2 sites*
 N = 2
 t = 1
 U = 2
+n = 2
 
-def m_test_2(N=2, t=1/2, U=2):
+def m_test_2(n=2, N=2, t=1/2, U=2):
 
     # Creation des etats mixtes
     etats = np.arange(4**(2*N))
@@ -1837,7 +1838,7 @@ def m_test_2(N=2, t=1/2, U=2):
     H, S = m_get_H_S(N, t, U) 
 
     # Test des combinaisons de 2 etats mixtes
-    for etats in combinations(states, 2):
+    for etats in combinations(states, n):
 
         # Diagonalisation       
         E = m_optimized_ground_energy(list(etats), H, S, N, t, U)[0][0]
@@ -1847,20 +1848,16 @@ def m_test_2(N=2, t=1/2, U=2):
             print(round(E0, 5))
     return
 
-#m_test_2(N, t/2, U)
+#m_test_2(n, N, t/2, U)
 
 
 
 ## Test etat mixte 4 sites
 
 """
-Retourne les etats mixtes (6) du systeme a 2 sites 
+Retourne les etats mixtes (n) du systeme a 4 sites 
 avec des parametres t et U suffisant a retrouver 
 l'energie fondamentale
-
-*Une correction a la valeur de t doit etre apportee
-(t = 1/2*t) en raison de l'absence de symetrie de 
-translation avec le systeme a 2 sites* 
 """
 
 N = 4
