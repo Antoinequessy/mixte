@@ -2,6 +2,7 @@ import os
 import math
 import numpy as np
 import scipy as sp
+import random
 from sympy import symbols, prod
 import matplotlib.pyplot as plt
 import time
@@ -1615,6 +1616,7 @@ N = 6
 t = 1
 U = 2
 n = 150
+n1 = 55
 
 def states_creation(N):
     """
@@ -1638,6 +1640,41 @@ def states_creation(N):
 
             states.append(number)
     return states
+
+def test_6(n1, N=6, t=1, U=2):
+    """
+    Retourne les etats de la base mixte (n) du 
+    systeme a 6 sites avec des parametres t et U 
+    suffisant a retrouver l'energie fondamentale
+    """
+
+    # Creation de tous les etats de la base mixte
+    states = []
+    etats = states_creation(N)
+    for element in etats:
+        ket_r = Ket(list(map(int, format(element, f'0{2*N}b'))), "r", str(element) + "r")
+        ket_k = Ket(list(map(int, format(element, f'0{2*N}b'))), "k", str(element) + "k")
+        states.append(ket_r)
+        states.append(ket_k)
+
+    # Energie fondamentale (numerique) a 6 sites
+    E0 = -5.4094568451    # pour t=1 et U=2
+
+    H, S = get_H_S(N, t, U) 
+
+    # Test des combinaisons de 2 etats mixtes
+    for i in range(math.comb(400, n1)):    
+        etats = random.sample(states, n1)
+
+        # Diagonalisation       
+        E = optimized_ground_energy(list(etats), H, S, N, t, U)[0][0]
+
+        if np.isclose(E, E0):
+            print([s.name for s in etats])
+            print(round(E0, 5))
+    return
+
+#test_6(n1, N, t, U)
 
 def optimized_fund_6(states, H, S, N=6, t=1, U=2):
     """
@@ -1863,7 +1900,7 @@ l'energie fondamentale
 N = 4
 t = 1
 U = 2
-n = 3
+n = 6
 
 def m_test_4(n, N=4, t=1, U=2):
 
@@ -1884,7 +1921,8 @@ def m_test_4(n, N=4, t=1, U=2):
     H, S = m_get_H_S(N, t, U)
 
     # Test des combinaisons de n etats mixtes
-    for etats in combinations(states, n):
+    for i in range(math.comb(784, n)):    
+        etats = random.sample(states, n)
 
         # Diagonalisation   
         E = m_optimized_ground_energy(list(etats), H, S, N, t, U)[0]
@@ -1896,6 +1934,74 @@ def m_test_4(n, N=4, t=1, U=2):
     return
 
 #m_test_4(n, N, t, U)
+
+
+
+## Test etats mixtes N sites : energie fondamentale et etat fondamental
+
+"""
+Creation d'une base d'etats mixtes pour un systeme 
+N sites avec les parametres t et U et recherche de 
+la plus petite valeur propre (energie fondamentale)
+Retourne l'energie fondamentale, les matrices
+H et S, l'etat fondamental, le statut de la base
+mixte utilisee (surcomplete ou non) ainsi que
+le temps de calcul
+"""
+
+etats = [576, 1026, 4100, 320]
+
+N = 4
+t = 1
+U = 2
+
+def etats_mixtes(etats, N, t=1, U=2):
+    
+    debut = time.perf_counter()
+
+    # Creation de tous les etats mixtes
+    els = np.arange(4**(2*N))
+    sts = []
+    compteur = 0
+    for el in els:
+        lst = list(map(int, format(el, f'0{4*N}b')))
+        if sum(lst[:2*N]) != 1 or sum(lst[2*N:]) != 1:
+            continue
+        ket = Ket(lst, None, str(el), compteur=compteur)
+        sts.append(ket)
+        compteur += 1    # indice matriciel
+
+    # Creation des etats mixtes
+    etats_set = set(etats)
+    states = [st for st in sts if st.number() in etats_set]
+    if len(states) != len(etats):
+        return print("etats mixtes non physiques")
+    
+    H, S = m_get_H_S(N, t, U)
+
+    # Diagonalisation
+    E, H, S, omega, overfilled = m_optimized_ground_energy(states, H, S, N, t, U)
+
+    fin = time.perf_counter()
+
+    # Affichage des resultats
+    print(states)
+    if overfilled == True:
+        print("\n")
+        print("BASE SURCOMPLETE")
+    print("\n")
+    print("Energie fondamentale : ", round(min(E), 5))
+    print("\n")
+    print("H = \n", H)
+    print("\n")
+    print("S = \n", S)
+    print("\n")
+    print("Etat fondamental : ", omega[0])
+    print("\n")
+    print(f"Temps d'exécution total : {fin - debut:.6f} s")
+    return E[0], H, S, omega[0]
+
+#etats_mixtes(etats, N, t, U)
 
 
 
